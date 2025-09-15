@@ -223,6 +223,40 @@ class BananaPlugin(Star):
             self.group_counts[group_id_str] = count - 1
             await self._save_group_counts()
 
+    # ------------------- 事件处理与命令 -------------------
+
+    async def on_message(self, event: AstrMessageEvent):
+        """
+        这是框架标准的消息处理方法，会接收所有消息。
+        我们在这里处理自然语言对话生图的逻辑。
+        """
+        # 检查自然对话功能是否开启
+        if not self.conf.get("enable_natural_conversation_drawing", False):
+            return
+
+        msg_text = event.message_str.strip()
+        
+        # 如果是指令，则忽略，交给指令处理器
+        if msg_text.startswith(tuple(self.context.get_config().get("command_starts", ["/", "#"]))):
+            return
+        
+        has_image = any(isinstance(seg, Image) for seg in event.message_obj.message)
+        
+        # 如果既没有文本也没有图片，则忽略
+        if not msg_text and not has_image:
+            return
+
+        # 进行意图判断
+        intent, prompt = await self._judge_drawing_intent(msg_text, has_image)
+
+        # 根据意图调用不同的处理流程
+        if intent == "drawing_text_only" and prompt:
+            async for result in self._process_generation_request(event, "自然对话-文生图", require_image=False, natural_prompt=prompt):
+                yield result
+        elif intent == "drawing_image_edit" and prompt:
+            async for result in self._process_generation_request(event, "自然对话-图生图", require_image=True, natural_prompt=prompt):
+                yield result
+
     @filter.command("生图增加用户次数", prefix_optional=True)
     async def on_add_user_counts(self, event: AstrMessageEvent):
         if not self.is_global_admin(event):
@@ -326,29 +360,6 @@ class BananaPlugin(Star):
         else:
             yield event.plain_result("格式错误，请使用 #生图删除key <序号|all>")
 
-    @filter.on_message()
-    async def on_natural_conversation(self, event: AstrMessageEvent):
-        if not self.conf.get("enable_natural_conversation_drawing", False):
-            return
-
-        msg_text = event.message_str.strip()
-        if msg_text.startswith(tuple(self.context.get_config().get("command_starts", ["/", "#"]))):
-            return
-        
-        has_image = any(isinstance(seg, Image) for seg in event.message_obj.message)
-        
-        if not msg_text and not has_image:
-            return
-
-        intent, prompt = await self._judge_drawing_intent(msg_text, has_image)
-
-        if intent == "drawing_text_only" and prompt:
-            async for result in self._process_generation_request(event, "自然对话-文生图", require_image=False, natural_prompt=prompt):
-                yield result
-        elif intent == "drawing_image_edit" and prompt:
-            async for result in self._process_generation_request(event, "自然对话-图生图", require_image=True, natural_prompt=prompt):
-                yield result
-
     async def _get_intent_api_key(self) -> str | None:
         keys = self.conf.get("intent_api_keys", [])
         if not keys: return None
@@ -371,7 +382,6 @@ class BananaPlugin(Star):
 
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         
-        # 构造向意图判断模型发送的上下文信息
         user_context_message = f"User message: \"{message}\"\nImage provided: {'Yes' if has_image else 'No'}"
         
         payload = {
