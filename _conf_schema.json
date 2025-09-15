@@ -1,0 +1,157 @@
+{
+    "api_url": {
+        "description": "【生图】内置的 API 的 URL 地址",
+        "type": "string",
+        "hint": "默认为插件中的地址",
+        "default": "https://api.bltcy.ai/v1/chat/completions"
+    },
+    "api_keys": {
+        "description": "【生图】API 密钥列表",
+        "type": "list",
+        "hint": "可以填写多个密钥，插件会自动轮换使用。使用 /生图添加key 命令进行管理。",
+        "items": {
+            "type": "string",
+            "description": "API 密钥"
+        },
+        "default": []
+    },
+    "prefix": {
+        "description": "【重要】是否要求指令必须带前缀",
+        "type": "bool",
+        "hint": "推荐开启。开启后，指令需要前缀（如 '/'）或 @机器人 才能触发，可避免日常聊天误触。",
+        "default": true
+    },
+    "use_proxy": {
+        "description": "是否启用网络代理",
+        "type": "bool",
+        "hint": "如果你的服务器无法直接访问 API 地址，请开启此项",
+        "default": false
+    },
+    "proxy_url": {
+        "description": "网络代理地址",
+        "type": "string",
+        "hint": "格式为 http://user:pass@host:port, 例如 http://127.0.0.1:7890",
+        "default": ""
+    },
+    "enable_natural_conversation_drawing": {
+        "description": "【智能】是否开启自然对话生图",
+        "type": "bool",
+        "hint": "开启后，将使用下方配置的大语言模型来智能判断用户的绘画意图。",
+        "default": false
+    },
+    "intent_api_base_url": {
+        "description": "【意图判断】大模型 API 地址",
+        "type": "string",
+        "hint": "用于判断用户绘画意图的大模型 API 地址，需兼容OpenAI格式。例如 https://api.openai.com/v1/chat/completions",
+        "default": ""
+    },
+    "intent_api_keys": {
+        "description": "【意图判断】大模型 API 密钥列表",
+        "type": "list",
+        "hint": "可以填写多个密钥，插件会自动轮换使用。",
+        "items": {
+            "type": "string",
+            "description": "API 密钥"
+        },
+        "default": []
+    },
+    "intent_model_name": {
+        "description": "【意图判断】大模型名称",
+        "type": "string",
+        "hint": "用于判断意图的大模型的名称，例如 gpt-4o, gemini-pro, moonshot-v1-...",
+        "default": ""
+    },
+    "intent_prompt": {
+        "description": "【意图判断】系统提示词 (System Prompt)",
+        "type": "text",
+        "editor_mode": true,
+        "editor_language": "markdown",
+        "hint": "指导大模型如何判断用户意图并按指定JSON格式返回结果，修改需谨慎。",
+        "default": "You are an intent detection assistant. Your task is to analyze the user's message and context (whether an image was provided) to determine their intent.\n\nRespond ONLY with a JSON object. There are three possible intents:\n1.  `drawing_text_only`: The user wants to generate an image from scratch using only text.\n2.  `drawing_image_edit`: The user has provided an image and wants to modify, edit, or restyle it based on their text.\n3.  `chat`: Any other case, such as casual conversation, asking questions, or commenting on an image without a clear instruction to modify it.\n\nThe JSON format should be:\n- For drawing intents: `{\"intent\": \"<intent_name>\", \"prompt\": \"<The user's core creative instruction>\"}`\n- For chat intent: `{\"intent\": \"chat\"}`\n\nDo not add any explanations or text outside of the JSON object.\n\n### Examples:\n\n**Input:**\nUser message: \"画一个穿着宇航服的猫在月球上吃鱼\"\nImage provided: No\n**Your response:** `{\"intent\": \"drawing_text_only\", \"prompt\": \"一个穿着宇航服的猫在月球上吃鱼\"}`\n\n**Input:**\nUser message: \"把这张图变成赛博朋克风格\"\nImage provided: Yes\n**Your response:** `{\"intent\": \"drawing_image_edit\", \"prompt\": \"把这张图变成赛博朋克风格\"}`\n\n**Input:**\nUser message: \"这张图真好看\"\nImage provided: Yes\n**Your response:** `{\"intent\": \"chat\"}`\n\n**Input:**\nUser message: \"你会画画吗？\"\nImage provided: No\n**Your response:** `{\"intent\": \"chat\"}`\n\n**Input:**\nUser message: \"\"\nImage provided: Yes\n**Your response:** `{\"intent\": \"chat\"}`"
+    },
+    "user_whitelist": {
+        "description": "【权限】用户白名单",
+        "type": "list",
+        "hint": "留空则对所有用户开放。填写后，只有在此列表中的用户才能使用本插件功能（管理员除外）。",
+        "items": {
+            "type": "string",
+            "description": "用户QQ号"
+        },
+        "default": []
+    },
+    "user_blacklist": {
+        "description": "【权限】用户黑名单",
+        "type": "list",
+        "hint": "黑名单优先级最高。在此列表中的用户将无法使用本插件功能（管理员除外）。",
+        "items": {
+            "type": "string",
+            "description": "用户QQ号"
+        },
+        "default": []
+    },
+    "group_whitelist": {
+        "description": "【权限】群聊白名单",
+        "type": "list",
+        "hint": "留空则在所有群聊中可用。填写后，只有在此列表中的群聊才能使用本插件功能。",
+        "items": {
+            "type": "string",
+            "description": "群号"
+        },
+        "default": []
+    },
+    "group_blacklist": {
+        "description": "【权限】群聊黑名单",
+        "type": "list",
+        "hint": "黑名单优先级最高。在此列表中的群聊将无法使用本插件功能。",
+        "items": {
+            "type": "string",
+            "description": "群号"
+        },
+        "default": []
+    },
+    "enable_user_limit": {
+        "description": "【次数限制】是否启用【用户】次数限制",
+        "type": "bool",
+        "hint": "开启后，将根据用户的QQ号独立计算和限制使用次数。",
+        "default": true
+    },
+    "enable_group_limit": {
+        "description": "【次数限制】是否启用【群组】次数限制",
+        "type": "bool",
+        "hint": "开启后，将根据群号计算和限制群内总的使用次数。",
+        "default": false
+    },
+    "help_text": {
+        "description": "使用 /生图帮助 指令时显示的文本",
+        "type": "text",
+        "editor_mode": true,
+        "editor_language": "markdown",
+        "default": "🎨 生图Pro插件使用帮助：\n\n📌 基础命令 (可加/也可不加)：\n手办化 [图片] - 生成标准手办化图片\nQ版化 [图片] - 生成Q版手办化图片\n痛屋化 [图片] - 生成痛屋场景图片\n痛车化 [图片] - 生成痛车场景图片\ncos化 [图片] - 生成cosplay照片\ncos自拍 [图片] - 生成cosplay自拍\n孤独的我 [图片] - 生成孤独场景图片\n贴纸化 [图片] - 生成贴纸化图片\n玉足 [图片] - 生成玉足图片\nfumo化 [图片] - 生成fumo化图片\n\n📌 数字版本：\n手办化2 [图片]\n手办化3 [图片]\n手办化4 [图片]\n手办化5 [图片]\n手办化6 [图片]\n\n📌 新增命令：\n第三视角 [图片]\n痛屋化2 [图片]\n鬼图 [图片]\n第一视角 [图片]\n\n📌 自定义提示词：\n/自定义图生图 <提示词> [图片]\n/自定义文生图 <提示词>\n\n📌 自然对话生图：\n在插件设置中开启并正确配置意图判断大模型后，直接对机器人说“画一个...”或发送图片并说“把它变成...”即可自动触发。\n\n📌 使用方式：\n1. 发送图片并使用命令\n2. 引用含有图片的消息并使用命令\n3. @某人使用命令（将使用该人的头像）\n\n📌 次数查询 (需加/)：\n/生图查询次数 - 查询自己和本群的剩余次数\n\n📌 管理命令 (仅主人, 需加/)：\n/生图添加key <key1> <key2>...\n/生图key列表\n/生图删除key <序号|all>\n/生图增加用户次数 <QQ号> <次数>\n/生图增加群组次数 <群号> <次数>"
+    },
+    "prompts": {
+        "description": "【可选】自定义指令的 Prompt 提示词",
+        "type": "object",
+        "hint": "在这里可以自定义或覆盖默认的指令效果。如果留空，插件将自动使用同目录下 prompts.json 文件中的默认设置。",
+        "items": {
+            "figurine_1": { "description": "手办化", "type": "text", "editor_mode": true, "default": "" },
+            "figurine_2": { "description": "手办化2", "type": "text", "editor_mode": true, "default": "" },
+            "figurine_3": { "description": "手办化3", "type": "text", "editor_mode": true, "default": "" },
+            "figurine_4": { "description": "手办化4", "type": "text", "editor_mode": true, "default": "" },
+            "figurine_5": { "description": "手办化5", "type": "text", "editor_mode": true, "default": "" },
+            "figurine_6": { "description": "手办化6", "type": "text", "editor_mode": true, "default": "" },
+            "q_version": { "description": "Q版化", "type": "text", "editor_mode": true, "default": "" },
+            "cos": { "description": "cos化", "type": "text", "editor_mode": true, "default": "" },
+            "cos_selfie": { "description": "cos自拍", "type": "text", "editor_mode": true, "default": "" },
+            "pain_room_1": { "description": "痛屋化", "type": "text", "editor_mode": true, "default": "" },
+            "pain_room_2": { "description": "痛屋化2", "type": "text", "editor_mode": true, "default": "" },
+            "pain_car": { "description": "痛车化", "type": "text", "editor_mode": true, "default": "" },
+            "clown": { "description": "孤独的我", "type": "text", "editor_mode": true, "default": "" },
+            "view_3": { "description": "第三视角", "type": "text", "editor_mode": true, "default": "" },
+            "ghost": { "description": "鬼图", "type": "text", "editor_mode": true, "default": "" },
+            "view_1": { "description": "第一视角", "type": "text", "editor_mode": true, "default": "" },
+            "sticker": { "description": "贴纸化", "type": "text", "editor_mode": true, "default": "" },
+            "foot_jade": { "description": "玉足", "type": "text", "editor_mode": true, "default": "" },
+            "fumo": { "description": "fumo化", "type": "text", "editor_mode": true, "default": "" }
+        }
+    }
+}
