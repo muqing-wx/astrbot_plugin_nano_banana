@@ -1,141 +1,103 @@
 {
-  "title": "🎨 Nano Banana 生图插件配置",
-  "description": "欢迎使用 Nano Banana！在这里配置插件的各项功能。要启用自然语言绘画，请确保您已在AstrBot核心中正确配置了支持工具调用(Function Calling)的大语言模型。",
-  "type": "object",
-  "properties": {
-    "api_network_settings": {
-      "title": "🔑 API 与网络配置",
-      "type": "object",
-      "properties": {
-        "api_url": {
-          "description": "【必需】生图 API 的请求地址",
-          "type": "string",
-          "hint": "这是提供AI绘画服务的核心接口地址。默认已填入柏拉图AI的地址。",
-          "default": "https://api.bltcy.ai/v1/chat/completions"
-        },
-        "api_keys": {
-          "description": "【必需】生图 API 密钥列表",
-          "type": "list",
-          "hint": "您的API密钥，是使用服务的凭证。可以填写多个，插件会在请求失败时自动轮换，非常可靠。推荐使用 /生图添加key 命令管理。",
-          "items": {
+    "api_url": {
+        "description": "【必需】生图 API 的请求地址",
+        "type": "string",
+        "hint": "这是提供AI绘画服务的核心接口地址。默认已填入柏拉图AI的地址。",
+        "default": "https://api.bltcy.ai/v1/chat/completions"
+    },
+    "api_keys": {
+        "description": "【必需】生图 API 密钥列表",
+        "type": "list",
+        "hint": "您的API密钥，是使用服务的凭证。可以填写多个，插件会在请求失败时自动轮换，非常可靠。推荐使用 /生图添加key 命令管理。",
+        "items": {
             "type": "string",
             "description": "API 密钥"
-          },
-          "default": []
         },
-        "use_proxy": {
-          "description": "启用网络代理",
-          "type": "bool",
-          "hint": "如果您的服务器无法直接连接到上面的API地址（例如服务器在内地），请务必开启此项。",
-          "default": false
-        },
-        "proxy_url": {
-          "description": "网络代理地址",
-          "type": "string",
-          "hint": "仅在“启用网络代理”开启时生效。格式为 http://user:pass@host:port，例如 http://127.0.0.1:7890",
-          "default": ""
-        }
-      }
+        "default": []
     },
-    "feature_settings": {
-      "title": "⚙️ 核心功能开关",
-      "type": "object",
-      "properties": {
-        "prefix": {
-          "description": "指令必须使用前缀 (如 /)",
-          "type": "bool",
-          "hint": "强烈建议开启！可以有效避免在日常聊天中误触绘画指令，例如无意中说出“手办化”三个字。",
-          "default": true
-        },
-        "enable_llm_tools": {
-          "description": "【智能】启用自然语言绘画 (LLM工具)",
-          "type": "bool",
-          "hint": "【核心功能】开启后，插件将能理解“画一只猫”、“把这张图变动漫风”等自然语言。此功能强依赖于您在AstrBot核心配置的主LLM，请确保其支持工具调用(Function Calling)。",
-          "default": true
-        }
-      }
+    "prefix": {
+        "description": "【重要】指令必须使用前缀 (如 /)",
+        "type": "bool",
+        "hint": "强烈建议开启！可以有效避免在日常聊天中误触绘画指令，例如无意中说出“手办化”三个字。",
+        "default": true
     },
-    "permission_settings": {
-      "title": "🛡️ 权限控制",
-      "type": "object",
-      "properties": {
-        "user_whitelist": {
-          "description": "用户白名单 (QQ号)",
-          "type": "list",
-          "hint": "留空则对所有用户开放。填写后，只有列表中的用户才能使用本插件（机器人主人除外）。",
-          "items": {
+    "use_proxy": {
+        "description": "启用网络代理",
+        "type": "bool",
+        "hint": "如果您的服务器无法直接连接到上面的API地址（例如服务器在内地），请务必开启此项。",
+        "default": false
+    },
+    "proxy_url": {
+        "description": "网络代理地址",
+        "type": "string",
+        "hint": "仅在“启用网络代理”开启时生效。格式为 http://user:pass@host:port，例如 http://127.0.0.1:7890",
+        "default": ""
+    },
+    "user_whitelist": {
+        "description": "【权限】用户白名单 (QQ号)",
+        "type": "list",
+        "hint": "留空则对所有用户开放。填写后，只有列表中的用户才能使用本插件（机器人主人除外）。",
+        "items": {
             "type": "string",
             "description": "用户QQ号"
-          },
-          "default": []
         },
-        "user_blacklist": {
-          "description": "用户黑名单 (QQ号)",
-          "type": "list",
-          "hint": "黑名单优先级最高。列表中的用户将无法使用本插件（机器人主人除外）。",
-          "items": {
+        "default": []
+    },
+    "user_blacklist": {
+        "description": "【权限】用户黑名单 (QQ号)",
+        "type": "list",
+        "hint": "黑名单优先级最高。列表中的用户将无法使用本插件（机器人主人除外）。",
+        "items": {
             "type": "string",
             "description": "用户QQ号"
-          },
-          "default": []
         },
-        "group_whitelist": {
-          "description": "群聊白名单 (群号)",
-          "type": "list",
-          "hint": "留空则在所有群聊中可用。填写后，插件只会在列表中的群聊生效。",
-          "items": {
+        "default": []
+    },
+    "group_whitelist": {
+        "description": "【权限】群聊白名单 (群号)",
+        "type": "list",
+        "hint": "留空则在所有群聊中可用。填写后，插件只会在列表中的群聊生效。",
+        "items": {
             "type": "string",
             "description": "群号"
-          },
-          "default": []
         },
-        "group_blacklist": {
-          "description": "群聊黑名单 (群号)",
-          "type": "list",
-          "hint": "黑名单优先级最高。插件将不会在列表中的群聊生效。",
-          "items": {
+        "default": []
+    },
+    "group_blacklist": {
+        "description": "【权限】群聊黑名单 (群号)",
+        "type": "list",
+        "hint": "黑名单优先级最高。插件将不会在列表中的群聊生效。",
+        "items": {
             "type": "string",
             "description": "群号"
-          },
-          "default": []
-        }
-      }
-    },
-    "limit_settings": {
-      "title": "📊 使用次数限制",
-      "type": "object",
-      "properties": {
-        "enable_user_limit": {
-          "description": "启用【个人】次数限制",
-          "type": "bool",
-          "hint": "为每个非管理员用户独立计算和限制使用次数。",
-          "default": true
         },
-        "enable_group_limit": {
-          "description": "启用【群组】次数限制",
-          "type": "bool",
-          "hint": "为每个群聊设置一个共享的使用次数池。当群聊次数存在时，会优先消耗群聊次数。",
-          "default": false
-        }
-      }
+        "default": []
     },
-    "customization_settings": {
-      "title": "🖌️ 自定义内容",
-      "type": "object",
-      "properties": {
-        "help_text": {
-          "description": "帮助信息内容",
-          "type": "text",
-          "editor_mode": true,
-          "editor_language": "markdown",
-          "hint": "自定义 `/生图帮助` 指令所展示的内容。您可以在此添加群规、鸣谢等信息。",
-          "default": "🎨 生图Pro插件使用帮助：\n\n📌 基础命令 (可加/也可不加)：\n手办化 [图片] - 生成标准手办化图片\nQ版化 [图片] - 生成Q版手办化图片\n痛屋化 [图片] - 生成痛屋场景图片\n痛车化 [图片] - 生成痛车场景图片\ncos化 [图片] - 生成cosplay照片\ncos自拍 [图片] - 生成cosplay自拍\n孤独的我 [图片] - 生成孤独场景图片\n贴纸化 [图片] - 生成贴纸化图片\n玉足 [图片] - 生成玉足图片\nfumo化 [图片] - 生成fumo化图片\n\n📌 数字版本：\n手办化2 [图片]\n手办化3 [图片]\n手办化4 [图片]\n手办化5 [图片]\n手办化6 [图片]\n\n📌 新增命令：\n第三视角 [图片]\n痛屋化2 [图片]\n鬼图 [图片]\n第一视角 [图片]\n\n📌 自定义提示词：\n/自定义图生图 <提示词> [图片]\n/自定义文生图 <提示词>\n\n📌 自然对话生图：\n在插件设置中开启“自然对话生图(LLM工具)”后，直接对机器人说“画一个...”或发送图片并说“把它变成...”即可自动触发。\n\n📌 使用方式：\n1. 发送图片并使用命令\n2. 引用含有图片的消息并使用命令\n3. @某人使用命令（将使用该人的头像）\n\n📌 次数查询 (需加/)：\n/生图查询次数 - 查询自己和本群的剩余次数\n\n📌 管理命令 (仅主人, 需加/)：\n/生图添加key <key1> <key2>...\n/生图key列表\n/生图删除key <序号|all>\n/生图增加用户次数 <QQ号> <次数>\n/生图增加群组次数 <群号> <次数>"
-        },
-        "prompts": {
-          "description": "【高级】自定义指令的 Prompt",
-          "type": "object",
-          "hint": "在这里可以精调或完全覆盖各预设指令的默认效果。如果留空，插件将使用自带的 prompts.json 文件。修改后会立即生效。",
-          "items": {
+    "enable_user_limit": {
+        "description": "【次数限制】启用【个人】次数限制",
+        "type": "bool",
+        "hint": "为每个非管理员用户独立计算和限制使用次数。",
+        "default": true
+    },
+    "enable_group_limit": {
+        "description": "【次数限制】启用【群组】次数限制",
+        "type": "bool",
+        "hint": "为每个群聊设置一个共享的使用次数池。当群聊次数存在时，会优先消耗群聊次数。",
+        "default": false
+    },
+    "help_text": {
+        "description": "【自定义】帮助信息内容",
+        "type": "text",
+        "editor_mode": true,
+        "editor_language": "markdown",
+        "hint": "自定义 `/生图帮助` 指令所展示的内容。您可以在此添加群规、鸣谢等信息。",
+        "default": "🎨 生图Pro插件使用帮助：\n\n📌 智能生图 (推荐):\n/生图 <提示词> [图片]\n/draw <提示词> [图片]\n说明：这是一个智能指令！\n- 如果你只发文字，它就是【文生图】。\n- 如果你带上图片，它就是【图生图】。\n\n📌 预设风格 (部分)：\n手办化 [图片]\nQ版化 [图片]\n痛屋化 [图片]\n痛车化 [图片]\ncos化 [图片]\n...等等，更多风格等你发现！\n\n📌 使用方式：\n1. 发送图片并使用命令\n2. 引用含有图片的消息并使用命令\n3. @某人并使用【预设风格】命令（将使用其头像）\n\n📌 次数查询 (需加/)：\n/生图查询次数 - 查询自己和本群的剩余次数\n\n📌 管理命令 (仅主人, 需加/)：\n/生图添加key <key1> <key2>...\n/生图key列表\n/生图删除key <序号|all>\n/生图增加用户次数 <QQ号> <次数>\n/生图增加群组次数 <群号> <次数>"
+    },
+    "prompts": {
+        "description": "【高级】自定义指令的 Prompt",
+        "type": "object",
+        "hint": "在这里可以精调或完全覆盖各预设指令的默认效果。如果留空，插件将使用自带的 prompts.json 文件。修改后会立即生效。",
+        "items": {
             "figurine_1": { "description": "手办化", "type": "text", "editor_mode": true, "default": "" },
             "figurine_2": { "description": "手办化2", "type": "text", "editor_mode": true, "default": "" },
             "figurine_3": { "description": "手办化3", "type": "text", "editor_mode": true, "default": "" },
@@ -155,9 +117,6 @@
             "sticker": { "description": "贴纸化", "type": "text", "editor_mode": true, "default": "" },
             "foot_jade": { "description": "玉足", "type": "text", "editor_mode": true, "default": "" },
             "fumo": { "description": "fumo化", "type": "text", "editor_mode": true, "default": "" }
-          }
         }
-      }
     }
-  }
 }

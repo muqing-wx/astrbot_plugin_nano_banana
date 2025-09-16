@@ -23,8 +23,8 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 @register(
     "astrbot_plugin_nano_banana",
     "沐沐沐倾",
-    "基于柏拉图api集多种预设风格、自定义图/文生图、智能对话绘画及后台管理于一体的强大AI生图插件。",
-    "1.0.1", # 增加卸载清理和LLM工具开关
+    "一款功能强大的AI生图插件，基于柏拉图API，集成了多种预设风格、智能统一指令、及后台管理功能。",
+    "1.0.3", # 彻底移除LLM工具，聚焦指令模式
 )
 class BananaPlugin(Star):
     class ImageWorkflow:
@@ -101,30 +101,28 @@ class BananaPlugin(Star):
                     await process_image(seg)
             return images
 
-        async def get_explicit_images_from_message(self, event: AstrMessageEvent) -> List[bytes]:
-            """供LLM工具使用：只获取消息中明确存在的图片。"""
-            images = await self._get_images_from_segments(event)
-            if images:
-                logger.info(f"LLM工具调用：在此次请求中找到了 {len(images)} 张显式图片。")
-            return images
+        async def get_explicit_images_only(self, event: AstrMessageEvent) -> List[bytes]:
+            """
+            【重要】仅获取用户显式发送或回复的图片，用于智能判断图生图/文生图模式。
+            此方法严格排除@用户的头像。
+            """
+            return await self._get_images_from_segments(event)
 
-        async def get_all_images(self, event: AstrMessageEvent) -> List[bytes]:
-            """供指令使用：获取所有图片，包括作为后备的头像。"""
+        async def get_all_images_for_preset_cmd(self, event: AstrMessageEvent) -> List[bytes]:
+            """
+            供预设指令（如/手办化）使用：获取所有图片，包括作为后备的@用户头像。
+            """
             images = await self._get_images_from_segments(event)
             if images:
-                logger.info(f"指令调用：在此次请求中找到了 {len(images)} 张显式图片。")
+                logger.info(f"预设指令：在此次请求中找到了 {len(images)} 张显式图片。")
                 return images
 
             at_user_id = next((str(s.qq) for s in event.message_obj.message if isinstance(s, At)), None)
             
             if at_user_id:
                 if avatar := await self._get_avatar(at_user_id):
-                    logger.info(f"指令调用：未找到图片，使用被@用户 {at_user_id} 的头像。")
+                    logger.info(f"预设指令：未找到图片，使用被@用户 {at_user_id} 的头像。")
                     return [avatar]
-
-            if avatar := await self._get_avatar(event.get_sender_id()):
-                logger.info(f"指令调用：未找到图片，使用发送者 {event.get_sender_id()} 的头像。")
-                return [avatar]
 
             return []
 
@@ -245,78 +243,32 @@ class BananaPlugin(Star):
             self.group_counts[group_id_str] = count - 1
             await self._save_group_counts()
 
-    # ------------------- LLM 工具定义 -------------------
-
-    @filter.llm_tool(
-        name="nano_banana_text_to_image",
-        params={
-            "prompt": {
-                "type": "string",
-                "description": "用户的原始文本。必须直接使用，不得进行任何修改、翻译或扩写。",
-                "required": True,
-            }
-        },
-    )
-    async def text_to_image_tool(self, event: AstrMessageEvent, prompt: str):
-        """
-        文生图工具：当用户意图是“从零开始、仅凭文字描述”来创造一张新图片时使用。
-        触发条件：用户的消息中不包含任何显式图片（发送、回复、引用），但有清晰的绘图或创作指令。
-        
-        使用示例:
-        - "画一只猫"
-        - "生成一张未来城市的科幻图片"
-        - "一个宇航员在月球上骑着马，超现实主义风格"
-        - "draw a dog playing a guitar"
-        """
-        if not self.conf.get("enable_llm_tools", False):
-            logger.debug("LLM工具调用功能已在配置中禁用，跳过 nano_banana_text_to_image 执行。")
-            return
-        
-        logger.info(f"核心LLM触发工具: nano_banana_text_to_image, prompt: {prompt}")
-        async for result in self._process_generation_request(event, "自然语言-文生图", require_image=False, natural_prompt=prompt):
-            yield result
-
-    @filter.llm_tool(
-        name="nano_banana_image_to_image",
-        params={
-            "prompt": {
-                "type": "string",
-                "description": "用户的原始修改或创作指令文本。必须直接使用，不得进行任何修改、翻译或扩写。",
-                "required": True,
-            }
-        },
-    )
-    async def image_to_image_tool(self, event: AstrMessageEvent, prompt: str):
-        """
-        图生图工具：当用户意图是“基于已有图片”进行修改、变换风格、重绘或二次创作时使用。
-        触发条件：用户的消息中必须同时包含显式图片（发送、回复、引用）和描述性的文本指令。
-
-        使用示例:
-        - (用户发送一张猫的图片并说): "给它戴上帽子"
-        - (用户回复一张风景照并说): "把这张图变成动漫风格"
-        - (用户发送一张人物照片并说): "把背景换成星空"
-        - (用户引用一张草图并说): "帮我把它细化上色"
-        """
-        if not self.conf.get("enable_llm_tools", False):
-            logger.debug("LLM工具调用功能已在配置中禁用，跳过 nano_banana_image_to_image 执行。")
-            return
-
-        logger.info(f"核心LLM触发工具: nano_banana_image_to_image, prompt: {prompt}")
+    # ------------------- 统一智能指令 -------------------
+    @filter.command("生图", "draw", "画画", prefix_optional=True)
+    async def on_cmd_draw(self, event: AstrMessageEvent):
         if not self.iwf:
             yield event.plain_result("插件内部错误：ImageWorkflow未初始化。")
             return
 
-        # LLM工具严格使用显式图片
-        explicit_images = await self.iwf.get_explicit_images_from_message(event)
-        if not explicit_images:
-            yield event.plain_result("图生图需要一张图片，但我没有在您的消息中找到。")
-            return
-
-        async for result in self._process_generation_request(event, "自然语言-图生图", require_image=True, natural_prompt=prompt, pre_fetched_images=explicit_images):
+        # 智能检测模式：仅检查显式图片
+        images = await self.iwf.get_explicit_images_only(event)
+        
+        if images:
+            mode = "图生图"
+            require_image = True
+        else:
+            mode = "文生图"
+            require_image = False
+        
+        async for result in self._process_generation_request(
+            event,
+            mode=mode,
+            require_image=require_image,
+            pre_fetched_images=images
+        ):
             yield result
 
-    # ------------------- 命令处理 -------------------
-
+    # ------------------- 管理命令 -------------------
     @filter.command("生图增加用户次数", prefix_optional=True)
     async def on_add_user_counts(self, event: AstrMessageEvent):
         if not self.is_global_admin(event):
@@ -420,76 +372,71 @@ class BananaPlugin(Star):
         else:
             yield event.plain_result("格式错误，请使用 #生图删除key <序号|all>")
 
+    # ------------------- 预设指令 -------------------
     @filter.command("手办化", prefix_optional=True)
     async def on_cmd_figurine(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "手办化", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="手办化", require_image=True): yield result
     @filter.command("手办化2", prefix_optional=True)
     async def on_cmd_figurine2(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "手办化2", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="手办化2", require_image=True): yield result
     @filter.command("手办化3", prefix_optional=True)
     async def on_cmd_figurine3(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "手办化3", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="手办化3", require_image=True): yield result
     @filter.command("手办化4", prefix_optional=True)
     async def on_cmd_figurine4(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "手办化4", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="手办化4", require_image=True): yield result
     @filter.command("手办化5", prefix_optional=True)
     async def on_cmd_figurine5(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "手办化5", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="手办化5", require_image=True): yield result
     @filter.command("手办化6", prefix_optional=True)
     async def on_cmd_figurine6(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "手办化6", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="手办化6", require_image=True): yield result
     @filter.command("Q版化", prefix_optional=True)
     async def on_cmd_qversion(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "Q版化", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="Q版化", require_image=True): yield result
     @filter.command("痛屋化", prefix_optional=True)
     async def on_cmd_painroom(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "痛屋化", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="痛屋化", require_image=True): yield result
     @filter.command("痛屋化2", prefix_optional=True)
     async def on_cmd_painroom2(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "痛屋化2", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="痛屋化2", require_image=True): yield result
     @filter.command("痛车化", prefix_optional=True)
     async def on_cmd_paincar(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "痛车化", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="痛车化", require_image=True): yield result
     @filter.command("cos化", prefix_optional=True)
     async def on_cmd_cos(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "cos化", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="cos化", require_image=True): yield result
     @filter.command("cos自拍", prefix_optional=True)
     async def on_cmd_cos_selfie(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "cos自拍", require_image=True): yield result
-    @filter.command("自定义图生图", prefix_optional=True)
-    async def on_cmd_img_to_img(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "自定义图生图", require_image=True): yield result
-    @filter.command("自定义文生图", prefix_optional=True)
-    async def on_cmd_text_to_image(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "自定义文生图", require_image=False): yield result
+        async for result in self._process_generation_request(event, mode="cos自拍", require_image=True): yield result
     @filter.command("孤独的我", prefix_optional=True)
     async def on_cmd_clown(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "孤独的我", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="孤独的我", require_image=True): yield result
     @filter.command("第三视角", prefix_optional=True)
     async def on_cmd_view3(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "第三视角", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="第三视角", require_image=True): yield result
     @filter.command("鬼图", prefix_optional=True)
     async def on_cmd_ghost(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "鬼图", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="鬼图", require_image=True): yield result
     @filter.command("第一视角", prefix_optional=True)
     async def on_cmd_view1(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "第一视角", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="第一视角", require_image=True): yield result
     @filter.command("贴纸化", prefix_optional=True)
     async def on_cmd_sticker(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "贴纸化", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="贴纸化", require_image=True): yield result
     @filter.command("玉足", prefix_optional=True)
     async def on_cmd_foot_jade(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "玉足", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="玉足", require_image=True): yield result
     @filter.command("fumo化", prefix_optional=True)
     async def on_cmd_fumo(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "fumo化", require_image=True): yield result
+        async for result in self._process_generation_request(event, mode="fumo化", require_image=True): yield result
     @filter.command("生图帮助", prefix_optional=True)
     async def on_cmd_help(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, "生图帮助", require_image=False): yield result
+        async for result in self._process_generation_request(event, mode="生图帮助", require_image=False): yield result
 
     # ------------------- 核心处理逻辑 -------------------
 
-    async def _process_generation_request(self, event: AstrMessageEvent, cmd: str, require_image: bool, natural_prompt: str = "", pre_fetched_images: Optional[List[bytes]] = None):
+    async def _process_generation_request(self, event: AstrMessageEvent, mode: str, require_image: bool, pre_fetched_images: Optional[List[bytes]] = None):
         cmd_text = event.message_str
         cmd_map = {"手办化": "figurine_1", "手办化2": "figurine_2", "手办化3": "figurine_3", "手办化4": "figurine_4",
                    "手办化5": "figurine_5", "手办化6": "figurine_6", "Q版化": "q_version", "痛屋化": "pain_room_1",
@@ -497,26 +444,24 @@ class BananaPlugin(Star):
                    "孤独的我": "clown", "第三视角": "view_3", "鬼图": "ghost", "第一视角": "view_1", "贴纸化": "sticker",
                    "玉足": "foot_jade", "fumo化": "fumo"}
 
-        if cmd == "生图帮助":
+        if mode == "生图帮助":
             help_text = self.conf.get("help_text", "帮助信息未配置。")
             yield event.plain_result(help_text)
             return
 
         user_prompt = ""
-        if cmd in ["自定义图生图", "自定义文生图"]:
+        if mode in ["文生图", "图生图"]:
             user_prompt = cmd_text.strip()
             if not user_prompt:
-                error_msg = "❌ 命令格式错误: /自定义图生图 <提示词> [图片]" if cmd == "自定义图生图" else "❌ 命令格式错误: /自定义文生图 <提示词>"
+                error_msg = f"❌ 命令格式错误: /{event.command} <提示词> [图片]"
                 yield event.plain_result(error_msg)
                 return
-        elif cmd.startswith("自然语言"):
-            user_prompt = natural_prompt
         else:
-            prompt_key = cmd_map.get(cmd)
+            prompt_key = cmd_map.get(mode)
             user_prompts = self.conf.get("prompts", {})
             user_prompt = user_prompts.get(prompt_key) or self.default_prompts.get(prompt_key, "")
             if not user_prompt:
-                yield event.plain_result(f"❌ 预设 '{cmd}' 未在配置中找到或prompt为空。")
+                yield event.plain_result(f"❌ 预设 '{mode}' 未在配置中找到或prompt为空。")
                 return
 
         sender_id, group_id, is_master = event.get_sender_id(), event.get_group_id(), self.is_global_admin(event)
@@ -534,16 +479,14 @@ class BananaPlugin(Star):
 
         img_bytes_list = []
         if require_image:
-            # 优先使用预加载的图片（来自LLM工具）
             if pre_fetched_images is not None:
                 img_bytes_list = pre_fetched_images
-            # 否则，执行指令的图片查找逻辑（包含头像）
-            elif not self.iwf or not (img_bytes_list := await self.iwf.get_all_images(event)):
+            elif not self.iwf or not (img_bytes_list := await self.iwf.get_all_images_for_preset_cmd(event)):
                 yield event.plain_result("此命令需要图片。请发送或引用一张图片，或@一个用户再试。"); return
             
-            yield event.plain_result(f"🎨 收到 {len(img_bytes_list)} 张图片，正在生成 [{cmd}] 风格的图片...")
+            yield event.plain_result(f"🎨 收到 {len(img_bytes_list)} 张图片，正在生成 [{mode}] 风格的图片...")
         else:
-            yield event.plain_result(f"🎨 收到指令，正在生成 [{cmd}] 风格的图片...")
+            yield event.plain_result(f"🎨 收到指令，正在生成 [{mode}] 风格的图片...")
 
         start_time = datetime.now()
         res = await self._call_api_with_retry(img_bytes_list, user_prompt)
@@ -556,7 +499,7 @@ class BananaPlugin(Star):
                 elif self.conf.get("enable_user_limit", True) and self._get_user_count(sender_id) > 0:
                     await self._decrease_user_count(sender_id)
 
-            caption_parts = [f"✅ 生成成功 ({elapsed:.2f}s)", f"模式: {cmd}"]
+            caption_parts = [f"✅ 生成成功 ({elapsed:.2f}s)", f"模式: {mode}"]
             if is_master:
                 caption_parts.append("剩余次数: ∞")
             else:

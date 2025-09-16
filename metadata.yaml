@@ -1,7 +1,7 @@
 {
     "name": "astrbot_plugin_nano_banana",
-    "desc": "基于柏拉图api集多种预设风格、自定义图/文生图、智能对话绘画及后台管理于一体的强大AI生图插件。",
+    "desc": "一款功能强大的AI生图插件，基于柏拉图API，集成了多种预设风格、智能统一指令、及后台管理功能。",
     "author": "沐沐沐倾",
     "repo": "https://github.com/mangen-wx/astrbot_plugin_nano_banana",
-    "version": "1.0.1"
+    "version": "1.0.3"
 }
