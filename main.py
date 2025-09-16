@@ -24,7 +24,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
     "astrbot_plugin_nano_banana",
     "沐沐沐倾",
     "基于柏拉图api集多种预设风格、自定义图/文生图、智能对话绘画及后台管理于一体的强大AI生图插件。",
-    "2.3.0",
+    "1.0.1", # 增加卸载清理和LLM工具开关
 )
 class BananaPlugin(Star):
     class ImageWorkflow:
@@ -78,7 +78,8 @@ class BananaPlugin(Star):
                 return None
             return await loop.run_in_executor(None, self._extract_first_frame_sync, raw)
 
-        async def get_all_images(self, event: AstrMessageEvent) -> List[bytes]:
+        async def _get_images_from_segments(self, event: AstrMessageEvent) -> List[bytes]:
+            """仅从消息段中提取显式图片（发送、回复、引用）。"""
             images = []
             processed_urls = set()
 
@@ -98,20 +99,31 @@ class BananaPlugin(Star):
             for seg in event.message_obj.message:
                 if isinstance(seg, Image):
                     await process_image(seg)
+            return images
 
+        async def get_explicit_images_from_message(self, event: AstrMessageEvent) -> List[bytes]:
+            """供LLM工具使用：只获取消息中明确存在的图片。"""
+            images = await self._get_images_from_segments(event)
             if images:
-                logger.info(f"在此次请求中找到了 {len(images)} 张图片。")
+                logger.info(f"LLM工具调用：在此次请求中找到了 {len(images)} 张显式图片。")
+            return images
+
+        async def get_all_images(self, event: AstrMessageEvent) -> List[bytes]:
+            """供指令使用：获取所有图片，包括作为后备的头像。"""
+            images = await self._get_images_from_segments(event)
+            if images:
+                logger.info(f"指令调用：在此次请求中找到了 {len(images)} 张显式图片。")
                 return images
 
             at_user_id = next((str(s.qq) for s in event.message_obj.message if isinstance(s, At)), None)
             
             if at_user_id:
                 if avatar := await self._get_avatar(at_user_id):
-                    logger.info(f"未找到图片，使用被@用户 {at_user_id} 的头像。")
+                    logger.info(f"指令调用：未找到图片，使用被@用户 {at_user_id} 的头像。")
                     return [avatar]
 
             if avatar := await self._get_avatar(event.get_sender_id()):
-                logger.info(f"未找到图片，使用发送者 {event.get_sender_id()} 的头像。")
+                logger.info(f"指令调用：未找到图片，使用发送者 {event.get_sender_id()} 的头像。")
                 return [avatar]
 
             return []
@@ -130,8 +142,6 @@ class BananaPlugin(Star):
         self.group_counts: Dict[str, int] = {}
         self.key_index = 0
         self.key_lock = asyncio.Lock()
-        self.intent_key_index = 0
-        self.intent_key_lock = asyncio.Lock()
         self.iwf: Optional[BananaPlugin.ImageWorkflow] = None
         self.default_prompts: Dict[str, str] = {}
 
@@ -152,8 +162,20 @@ class BananaPlugin(Star):
         logger.info("Nano Banana 生图插件已加载")
         if not self.conf.get("api_keys"):
             logger.warning("NanoBananaPlugin: 未配置任何[生图] API 密钥，插件可能无法工作")
-        if self.conf.get("enable_natural_conversation_drawing") and not self.conf.get("intent_api_keys"):
-            logger.warning("NanoBananaPlugin: 自然对话生图已开启，但未配置[意图判断] API 密钥。")
+
+    async def uninstall(self):
+        """插件卸载时调用的方法，用于清理资源。"""
+        logger.info("正在卸载 Nano Banana 插件，开始清理数据文件...")
+        try:
+            if self.user_counts_file.exists():
+                self.user_counts_file.unlink()
+                logger.info(f"已删除用户次数文件: {self.user_counts_file}")
+            if self.group_counts_file.exists():
+                self.group_counts_file.unlink()
+                logger.info(f"已删除群组次数文件: {self.group_counts_file}")
+            logger.info("数据文件清理完成。")
+        except Exception as e:
+            logger.error(f"卸载插件时清理文件失败: {e}", exc_info=True)
 
     def is_global_admin(self, event: AstrMessageEvent) -> bool:
         admin_ids = self.context.get_config().get("admins_id", [])
@@ -223,39 +245,65 @@ class BananaPlugin(Star):
             self.group_counts[group_id_str] = count - 1
             await self._save_group_counts()
 
-    # ------------------- 事件处理与命令 -------------------
+    # ------------------- LLM 工具定义 -------------------
 
-    async def on_message(self, event: AstrMessageEvent):
+    @filter.llm_tool(name="nano_banana_text_to_image")
+    async def text_to_image_tool(self, event: AstrMessageEvent, prompt: str):
         """
-        这是框架标准的消息处理方法，会接收所有消息。
-        我们在这里处理自然语言对话生图的逻辑。
+        文生图工具：当用户意图是“从零开始、仅凭文字描述”来创造一张新图片时使用。
+        触发条件：用户的消息中不包含任何显式图片（发送、回复、引用），但有清晰的绘图或创作指令。
+        
+        使用示例:
+        - "画一只猫"
+        - "生成一张未来城市的科幻图片"
+        - "一个宇航员在月球上骑着马，超现实主义风格"
+        - "draw a dog playing a guitar"
+
+        Args:
+            prompt (str): 用户的原始文本。必须直接使用，不得进行任何修改、翻译或扩写。
         """
-        # 检查自然对话功能是否开启
-        if not self.conf.get("enable_natural_conversation_drawing", False):
-            return
-
-        msg_text = event.message_str.strip()
-        
-        # 如果是指令，则忽略，交给指令处理器
-        if msg_text.startswith(tuple(self.context.get_config().get("command_starts", ["/", "#"]))):
+        if not self.conf.get("enable_llm_tools", False):
+            logger.debug("LLM工具调用功能已在配置中禁用，跳过 nano_banana_text_to_image 执行。")
             return
         
-        has_image = any(isinstance(seg, Image) for seg in event.message_obj.message)
-        
-        # 如果既没有文本也没有图片，则忽略
-        if not msg_text and not has_image:
+        logger.info(f"核心LLM触发工具: nano_banana_text_to_image, prompt: {prompt}")
+        async for result in self._process_generation_request(event, "自然语言-文生图", require_image=False, natural_prompt=prompt):
+            yield result
+
+    @filter.llm_tool(name="nano_banana_image_to_image")
+    async def image_to_image_tool(self, event: AstrMessageEvent, prompt: str):
+        """
+        图生图工具：当用户意图是“基于已有图片”进行修改、变换风格、重绘或二次创作时使用。
+        触发条件：用户的消息中必须同时包含显式图片（发送、回复、引用）和描述性的文本指令。
+
+        使用示例:
+        - (用户发送一张猫的图片并说): "给它戴上帽子"
+        - (用户回复一张风景照并说): "把这张图变成动漫风格"
+        - (用户发送一张人物照片并说): "把背景换成星空"
+        - (用户引用一张草图并说): "帮我把它细化上色"
+
+        Args:
+            prompt (str): 用户的原始修改或创作指令文本。必须直接使用，不得进行任何修改、翻译或扩写。
+        """
+        if not self.conf.get("enable_llm_tools", False):
+            logger.debug("LLM工具调用功能已在配置中禁用，跳过 nano_banana_image_to_image 执行。")
             return
 
-        # 进行意图判断
-        intent, prompt = await self._judge_drawing_intent(msg_text, has_image)
+        logger.info(f"核心LLM触发工具: nano_banana_image_to_image, prompt: {prompt}")
+        if not self.iwf:
+            yield event.plain_result("插件内部错误：ImageWorkflow未初始化。")
+            return
 
-        # 根据意图调用不同的处理流程
-        if intent == "drawing_text_only" and prompt:
-            async for result in self._process_generation_request(event, "自然对话-文生图", require_image=False, natural_prompt=prompt):
-                yield result
-        elif intent == "drawing_image_edit" and prompt:
-            async for result in self._process_generation_request(event, "自然对话-图生图", require_image=True, natural_prompt=prompt):
-                yield result
+        # LLM工具严格使用显式图片
+        explicit_images = await self.iwf.get_explicit_images_from_message(event)
+        if not explicit_images:
+            yield event.plain_result("图生图需要一张图片，但我没有在您的消息中找到。")
+            return
+
+        async for result in self._process_generation_request(event, "自然语言-图生图", require_image=True, natural_prompt=prompt, pre_fetched_images=explicit_images):
+            yield result
+
+    # ------------------- 命令处理 -------------------
 
     @filter.command("生图增加用户次数", prefix_optional=True)
     async def on_add_user_counts(self, event: AstrMessageEvent):
@@ -360,73 +408,6 @@ class BananaPlugin(Star):
         else:
             yield event.plain_result("格式错误，请使用 #生图删除key <序号|all>")
 
-    async def _get_intent_api_key(self) -> str | None:
-        keys = self.conf.get("intent_api_keys", [])
-        if not keys: return None
-        async with self.intent_key_lock:
-            key = keys[self.intent_key_index]
-            self.intent_key_index = (self.intent_key_index + 1) % len(keys)
-            return key
-
-    async def _judge_drawing_intent(self, message: str, has_image: bool) -> Tuple[Optional[str], Optional[str]]:
-        api_url = self.conf.get("intent_api_base_url")
-        model_name = self.conf.get("intent_model_name")
-        system_prompt = self.conf.get("intent_prompt")
-        api_key = await self._get_intent_api_key()
-
-        if not all([api_url, model_name, api_key, system_prompt]):
-            if not getattr(self, "_intent_config_warning_logged", False):
-                logger.warning("自然对话生图已开启，但意图判断大模型未完整配置 (URL, Key, Model Name)，功能将不会生效。")
-                self._intent_config_warning_logged = True
-            return None, None
-
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        
-        user_context_message = f"User message: \"{message}\"\nImage provided: {'Yes' if has_image else 'No'}"
-        
-        payload = {
-            "model": model_name,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_context_message}
-            ],
-            "temperature": 0.1,
-            "response_format": {"type": "json_object"}
-        }
-
-        try:
-            if not self.iwf: return None, None
-            async with self.iwf.session.post(api_url, json=payload, headers=headers, proxy=self.iwf.proxy, timeout=15) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    logger.error(f"意图判断API请求失败: HTTP {resp.status}, 响应: {error_text[:300]}")
-                    return None, None
-                
-                data = await resp.json()
-                content_str = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                if not content_str:
-                    return None, None
-
-                intent_data = json.loads(content_str)
-                
-                intent = intent_data.get("intent")
-                if intent in ["drawing_text_only", "drawing_image_edit"]:
-                    prompt = intent_data.get("prompt")
-                    if isinstance(prompt, str) and prompt:
-                        logger.info(f"意图判断成功: 检测到 '{intent}' 意图，提示词: '{prompt}'")
-                        return intent, prompt
-                elif intent == "chat":
-                    logger.info("意图判断成功: 检测到 'chat' 意图，不执行操作。")
-
-        except json.JSONDecodeError:
-            logger.error(f"意图判断失败: LLM返回的不是有效的JSON。响应: {content_str}")
-        except asyncio.TimeoutError:
-            logger.error("意图判断API请求超时")
-        except Exception as e:
-            logger.error(f"意图判断时发生未知错误: {e}", exc_info=True)
-        
-        return None, None
-
     @filter.command("手办化", prefix_optional=True)
     async def on_cmd_figurine(self, event: AstrMessageEvent):
         async for result in self._process_generation_request(event, "手办化", require_image=True): yield result
@@ -494,7 +475,9 @@ class BananaPlugin(Star):
     async def on_cmd_help(self, event: AstrMessageEvent):
         async for result in self._process_generation_request(event, "生图帮助", require_image=False): yield result
 
-    async def _process_generation_request(self, event: AstrMessageEvent, cmd: str, require_image: bool, natural_prompt: str = ""):
+    # ------------------- 核心处理逻辑 -------------------
+
+    async def _process_generation_request(self, event: AstrMessageEvent, cmd: str, require_image: bool, natural_prompt: str = "", pre_fetched_images: Optional[List[bytes]] = None):
         cmd_text = event.message_str
         cmd_map = {"手办化": "figurine_1", "手办化2": "figurine_2", "手办化3": "figurine_3", "手办化4": "figurine_4",
                    "手办化5": "figurine_5", "手办化6": "figurine_6", "Q版化": "q_version", "痛屋化": "pain_room_1",
@@ -514,7 +497,7 @@ class BananaPlugin(Star):
                 error_msg = "❌ 命令格式错误: /自定义图生图 <提示词> [图片]" if cmd == "自定义图生图" else "❌ 命令格式错误: /自定义文生图 <提示词>"
                 yield event.plain_result(error_msg)
                 return
-        elif cmd.startswith("自然对话"):
+        elif cmd.startswith("自然语言"):
             user_prompt = natural_prompt
         else:
             prompt_key = cmd_map.get(cmd)
@@ -539,14 +522,19 @@ class BananaPlugin(Star):
 
         img_bytes_list = []
         if require_image:
-            if not self.iwf or not (img_bytes_list := await self.iwf.get_all_images(event)):
+            # 优先使用预加载的图片（来自LLM工具）
+            if pre_fetched_images is not None:
+                img_bytes_list = pre_fetched_images
+            # 否则，执行指令的图片查找逻辑（包含头像）
+            elif not self.iwf or not (img_bytes_list := await self.iwf.get_all_images(event)):
                 yield event.plain_result("此命令需要图片。请发送或引用一张图片，或@一个用户再试。"); return
+            
             yield event.plain_result(f"🎨 收到 {len(img_bytes_list)} 张图片，正在生成 [{cmd}] 风格的图片...")
         else:
-            yield event.plain_result(f"🎨 收到您的指令，正在生成 [{cmd}] 风格的图片...")
+            yield event.plain_result(f"🎨 收到指令，正在生成 [{cmd}] 风格的图片...")
 
         start_time = datetime.now()
-        res = await self._call_api(img_bytes_list, user_prompt)
+        res = await self._call_api_with_retry(img_bytes_list, user_prompt)
         elapsed = (datetime.now() - start_time).total_seconds()
 
         if isinstance(res, bytes):
@@ -566,13 +554,18 @@ class BananaPlugin(Star):
         else:
             yield event.plain_result(f"❌ 生成失败 ({elapsed:.2f}s)\n原因: {res}")
 
-    async def _get_api_key(self) -> str | None:
+    async def _get_current_api_key(self) -> str | None:
         keys = self.conf.get("api_keys", [])
         if not keys: return None
         async with self.key_lock:
-            key = keys[self.key_index]
+            return keys[self.key_index]
+
+    async def _switch_next_api_key(self):
+        keys = self.conf.get("api_keys", [])
+        if not keys: return
+        async with self.key_lock:
             self.key_index = (self.key_index + 1) % len(keys)
-            return key
+            logger.info(f"API密钥已切换至索引: {self.key_index}")
 
     def _extract_image_url_from_response(self, data: Dict[str, Any]) -> str | None:
         try: return data["choices"][0]["message"]["images"][0]["image_url"]["url"]
@@ -586,11 +579,34 @@ class BananaPlugin(Star):
         except (IndexError, TypeError, KeyError): pass
         return None
 
-    async def _call_api(self, image_bytes_list: List[bytes], prompt: str) -> bytes | str:
+    async def _call_api_with_retry(self, image_bytes_list: List[bytes], prompt: str) -> bytes | str:
+        api_keys = self.conf.get("api_keys", [])
+        if not api_keys:
+            return "无可用的 API Key"
+
+        max_attempts = len(api_keys)
+        for attempt in range(max_attempts):
+            api_key = await self._get_current_api_key()
+            if not api_key:
+                continue
+
+            logger.info(f"尝试使用API密钥 (索引: {self.key_index}, 尝试次数: {attempt + 1}/{max_attempts}) 进行生图...")
+            
+            try:
+                result = await self._call_api_single(api_key, image_bytes_list, prompt)
+                return result
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                logger.error(f"第 {attempt + 1} 次尝试失败 (密钥索引 {self.key_index}): 网络错误 {e}")
+                await self._switch_next_api_key()
+            except Exception as e:
+                logger.error(f"第 {attempt + 1} 次尝试失败 (密钥索引 {self.key_index}): 未知错误 {e}", exc_info=True)
+                await self._switch_next_api_key()
+        
+        return "所有API密钥均尝试失败，请检查密钥配置或网络连接。"
+
+    async def _call_api_single(self, api_key: str, image_bytes_list: List[bytes], prompt: str) -> bytes | str:
         api_url = self.conf.get("api_url")
         if not api_url: return "API URL 未配置"
-        api_key = await self._get_api_key()
-        if not api_key: return "无可用的 API Key"
 
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         content_list = [{"type": "text", "text": prompt}]
@@ -601,28 +617,31 @@ class BananaPlugin(Star):
 
         payload = {"model": "nano-banana", "max_tokens": 1500, "stream": False, "messages": [{"role": "user", "content": content_list}]}
         
-        try:
-            if not self.iwf: return "ImageWorkflow 未初始化"
-            async with self.iwf.session.post(api_url, json=payload, headers=headers, proxy=self.iwf.proxy, timeout=120) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    logger.error(f"API 请求失败: HTTP {resp.status}, 响应: {error_text}")
-                    return f"API请求失败 (HTTP {resp.status}): {error_text[:200]}"
-                data = await resp.json()
-                if "error" in data: return data["error"].get("message", json.dumps(data["error"]))
-                gen_image_url = self._extract_image_url_from_response(data)
-                if not gen_image_url:
-                    error_msg = f"API响应中未找到图片数据。原始响应 (部分): {str(data)[:500]}..."
-                    logger.error(f"API响应中未找到图片数据: {data}")
-                    return error_msg
-                if gen_image_url.startswith("data:image/"):
-                    return base64.b64decode(gen_image_url.split(",", 1)[1])
+        if not self.iwf: return "ImageWorkflow 未初始化"
+        async with self.iwf.session.post(api_url, json=payload, headers=headers, proxy=self.iwf.proxy, timeout=120) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                logger.error(f"API 请求失败: HTTP {resp.status}, 响应: {error_text}")
+                raise aiohttp.ClientResponseError(resp.request_info, resp.history, status=resp.status, message=error_text)
+            
+            data = await resp.json()
+            if "error" in data:
+                return data["error"].get("message", json.dumps(data["error"]))
+            
+            gen_image_url = self._extract_image_url_from_response(data)
+            if not gen_image_url:
+                error_msg = f"API响应中未找到图片数据。原始响应 (部分): {str(data)[:500]}..."
+                logger.error(f"API响应中未找到图片数据: {data}")
+                return error_msg
+            
+            if gen_image_url.startswith("data:image/"):
+                return base64.b64decode(gen_image_url.split(",", 1)[1])
+            else:
+                downloaded_image = await self.iwf._download_image(gen_image_url)
+                if downloaded_image:
+                    return downloaded_image
                 else:
-                    return await self.iwf._download_image(gen_image_url) or "下载生成的图片失败"
-        except asyncio.TimeoutError:
-            logger.error("API 请求超时"); return "请求超时"
-        except Exception as e:
-            logger.error(f"调用 API 时发生未知错误: {e}", exc_info=True); return f"发生未知错误: {e}"
+                    raise Exception("下载生成的图片失败")
 
     async def terminate(self):
         if self.iwf: await self.iwf.terminate()
