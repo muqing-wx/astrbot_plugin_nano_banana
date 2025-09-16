@@ -247,7 +247,16 @@ class BananaPlugin(Star):
 
     # ------------------- LLM 工具定义 -------------------
 
-    @filter.llm_tool(name="nano_banana_text_to_image")
+    @filter.llm_tool(
+        name="nano_banana_text_to_image",
+        params={
+            "prompt": {
+                "type": "string",
+                "description": "用户的原始文本。必须直接使用，不得进行任何修改、翻译或扩写。",
+                "required": True,
+            }
+        },
+    )
     async def text_to_image_tool(self, event: AstrMessageEvent, prompt: str):
         """
         文生图工具：当用户意图是“从零开始、仅凭文字描述”来创造一张新图片时使用。
@@ -258,9 +267,6 @@ class BananaPlugin(Star):
         - "生成一张未来城市的科幻图片"
         - "一个宇航员在月球上骑着马，超现实主义风格"
         - "draw a dog playing a guitar"
-
-        Args:
-            prompt (str): 用户的原始文本。必须直接使用，不得进行任何修改、翻译或扩写。
         """
         if not self.conf.get("enable_llm_tools", False):
             logger.debug("LLM工具调用功能已在配置中禁用，跳过 nano_banana_text_to_image 执行。")
@@ -270,7 +276,16 @@ class BananaPlugin(Star):
         async for result in self._process_generation_request(event, "自然语言-文生图", require_image=False, natural_prompt=prompt):
             yield result
 
-    @filter.llm_tool(name="nano_banana_image_to_image")
+    @filter.llm_tool(
+        name="nano_banana_image_to_image",
+        params={
+            "prompt": {
+                "type": "string",
+                "description": "用户的原始修改或创作指令文本。必须直接使用，不得进行任何修改、翻译或扩写。",
+                "required": True,
+            }
+        },
+    )
     async def image_to_image_tool(self, event: AstrMessageEvent, prompt: str):
         """
         图生图工具：当用户意图是“基于已有图片”进行修改、变换风格、重绘或二次创作时使用。
@@ -281,9 +296,6 @@ class BananaPlugin(Star):
         - (用户回复一张风景照并说): "把这张图变成动漫风格"
         - (用户发送一张人物照片并说): "把背景换成星空"
         - (用户引用一张草图并说): "帮我把它细化上色"
-
-        Args:
-            prompt (str): 用户的原始修改或创作指令文本。必须直接使用，不得进行任何修改、翻译或扩写。
         """
         if not self.conf.get("enable_llm_tools", False):
             logger.debug("LLM工具调用功能已在配置中禁用，跳过 nano_banana_image_to_image 执行。")
