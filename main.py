@@ -24,7 +24,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
     "astrbot_plugin_nano_banana",
     "沐沐沐倾",
     "一款功能强大的AI生图插件，基于柏拉图API，集成了多种预设风格、智能统一指令、及后台管理功能。",
-    "1.0.5", # 帮助图文合并发送，并优化排版
+    "1.0.7", # 采用全新的专业级帮助图排版
 )
 class BananaPlugin(Star):
     class ImageWorkflow:
@@ -79,56 +79,33 @@ class BananaPlugin(Star):
             return await loop.run_in_executor(None, self._extract_first_frame_sync, raw)
 
         async def _get_images_from_segments(self, event: AstrMessageEvent) -> List[bytes]:
-            """仅从消息段中提取显式图片（发送、回复、引用）。"""
             images = []
             processed_urls = set()
-
             async def process_image(seg: Image):
                 url_or_file = seg.url or seg.file
                 if url_or_file and url_or_file not in processed_urls:
                     if img_bytes := await self._load_bytes(url_or_file):
                         images.append(img_bytes)
                         processed_urls.add(url_or_file)
-
             for seg in event.message_obj.message:
                 if isinstance(seg, Reply) and seg.chain:
                     for s_chain in seg.chain:
-                        if isinstance(s_chain, Image):
-                            await process_image(s_chain)
-            
+                        if isinstance(s_chain, Image): await process_image(s_chain)
             for seg in event.message_obj.message:
-                if isinstance(seg, Image):
-                    await process_image(seg)
+                if isinstance(seg, Image): await process_image(seg)
             return images
 
         async def get_explicit_images_only(self, event: AstrMessageEvent) -> List[bytes]:
-            """
-            【重要】仅获取用户显式发送或回复的图片，用于智能判断图生图/文生图模式。
-            此方法严格排除@用户的头像。
-            """
             return await self._get_images_from_segments(event)
 
         async def get_all_images_for_preset_cmd(self, event: AstrMessageEvent) -> List[bytes]:
-            """
-            供预设指令（如/手办化）使用：获取所有图片，包括作为后备的@用户头像。
-            """
-            images = await self._get_images_from_segments(event)
-            if images:
-                logger.info(f"预设指令：在此次请求中找到了 {len(images)} 张显式图片。")
-                return images
-
-            at_user_id = next((str(s.qq) for s in event.message_obj.message if isinstance(s, At)), None)
-            
-            if at_user_id:
-                if avatar := await self._get_avatar(at_user_id):
-                    logger.info(f"预设指令：未找到图片，使用被@用户 {at_user_id} 的头像。")
-                    return [avatar]
-
+            if images := await self._get_images_from_segments(event): return images
+            if at_user_id := next((str(s.qq) for s in event.message_obj.message if isinstance(s, At)), None):
+                if avatar := await self._get_avatar(at_user_id): return [avatar]
             return []
 
         async def terminate(self):
-            if self.session and not self.session.closed:
-                await self.session.close()
+            if self.session and not self.session.closed: await self.session.close()
 
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -143,201 +120,163 @@ class BananaPlugin(Star):
         self.iwf: Optional[BananaPlugin.ImageWorkflow] = None
         self.default_prompts: Dict[str, str] = {}
         self.font_path = Path(__file__).parent / "resources" / "font.ttf"
-        self.font: Optional[ImageFont.FreeTypeFont] = None
-        
-        # 推广链接信息
+        self.fonts = {}
         self.promo_text = "柏拉图AI_API中转站: "
         self.promo_link = "https://api.bltcy.ai/register?aff=63Ig"
 
     async def initialize(self):
         prompts_file = Path(__file__).parent / "prompts.json"
         if prompts_file.exists():
-            try:
-                content = prompts_file.read_text("utf-8")
-                self.default_prompts = json.loads(content)
-                logger.info("默认 prompts.json 文件已加载")
-            except Exception as e:
-                logger.error(f"加载默认 prompts.json 文件失败: {e}", exc_info=True)
+            try: self.default_prompts = json.loads(prompts_file.read_text("utf-8"))
+            except Exception as e: logger.error(f"加载 prompts.json 失败: {e}", exc_info=True)
         
         if self.font_path.exists():
             try:
-                self.font = ImageFont.truetype(str(self.font_path), 24)
+                self.fonts['title'] = ImageFont.truetype(str(self.font_path), 52)
+                self.fonts['header'] = ImageFont.truetype(str(self.font_path), 34)
+                self.fonts['body'] = ImageFont.truetype(str(self.font_path), 26)
                 logger.info(f"帮助图片字体已加载: {self.font_path}")
-            except Exception as e:
-                logger.warning(f"加载字体文件失败，帮助信息将以文本形式发送: {e}")
-        else:
-            logger.warning(f"字体文件未找到: {self.font_path}。帮助信息将以文本形式发送。")
+            except Exception as e: logger.warning(f"加载字体失败，帮助信息将以文本发送: {e}")
+        else: logger.warning(f"字体文件未找到: {self.font_path}。帮助信息将以文本发送。")
 
-        use_proxy = self.conf.get("use_proxy", False)
-        proxy_url = self.conf.get("proxy_url") if use_proxy else None
+        proxy_url = self.conf.get("proxy_url") if self.conf.get("use_proxy", False) else None
         self.iwf = self.ImageWorkflow(proxy_url)
         await self._load_user_counts()
         await self._load_group_counts()
         logger.info("Nano Banana 生图插件已加载")
-        if not self.conf.get("api_keys"):
-            logger.warning("NanoBananaPlugin: 未配置任何[生图] API 密钥，插件可能无法工作")
+        if not self.conf.get("api_keys"): logger.warning("NanoBananaPlugin: 未配置任何API密钥")
 
     async def uninstall(self):
-        """插件卸载时调用的方法，用于清理资源。"""
-        logger.info("正在卸载 Nano Banana 插件，开始清理数据文件...")
+        logger.info("正在卸载 Nano Banana 插件...")
         try:
-            if self.user_counts_file.exists():
-                self.user_counts_file.unlink()
-                logger.info(f"已删除用户次数文件: {self.user_counts_file}")
-            if self.group_counts_file.exists():
-                self.group_counts_file.unlink()
-                logger.info(f"已删除群组次数文件: {self.group_counts_file}")
-            logger.info("数据文件清理完成。")
-        except Exception as e:
-            logger.error(f"卸载插件时清理文件失败: {e}", exc_info=True)
+            if self.user_counts_file.exists(): self.user_counts_file.unlink()
+            if self.group_counts_file.exists(): self.group_counts_file.unlink()
+        except Exception as e: logger.error(f"卸载插件时清理文件失败: {e}", exc_info=True)
 
     def is_global_admin(self, event: AstrMessageEvent) -> bool:
-        admin_ids = self.context.get_config().get("admins_id", [])
-        return event.get_sender_id() in admin_ids
+        return event.get_sender_id() in self.context.get_config().get("admins_id", [])
 
     def _render_text_to_image_sync(self, text: str) -> bytes | None:
-        if not self.font:
-            return None
-        
-        padding = 40
-        line_spacing = 10
-        bg_color = (255, 255, 255)
-        text_color = (0, 0, 0)
-        
+        if not self.fonts: return None
+
+        PADDING = 60
+        TITLE_SPACING = 40
+        SECTION_SPACING = 25
+        LINE_SPACING = 18
+        BG_COLOR = (240, 240, 245)
+        TITLE_COLOR = (20, 20, 20)
+        HEADER_COLOR = (58, 77, 143)
+        BODY_COLOR = (51, 51, 51)
+        LINE_COLOR = (220, 220, 225)
+
         lines = text.strip().split('\n')
         
+        content_blocks = []
         max_width = 0
-        total_height = 0
-        line_heights = []
-
         for line in lines:
-            try:
-                bbox = self.font.getbbox(line)
-                line_width = bbox[2] - bbox[0]
-                line_height = bbox[3] - bbox[1]
-            except Exception:
-                line_width, line_height = self.font.getsize(line)
+            line = line.strip()
+            font, content = None, ""
+            if line.startswith('# '): font, content = self.fonts['title'], line[2:]
+            elif line.startswith('## '): font, content = self.fonts['header'], line[3:]
+            elif line.startswith('* '): font, content = self.fonts['body'], line[2:]
+            elif line.startswith('---'): font, content = None, '---'
+            elif line: font, content = self.fonts['body'], line
+            
+            if font:
+                width = font.getbbox(content)[2]
+                if line.startswith('* '): width += 40
+                if width > max_width: max_width = width
+            content_blocks.append({'type': line[:3] if line else 'empty', 'content': content, 'font': font})
 
-            if line_width > max_width:
-                max_width = line_width
-            total_height += line_height + line_spacing
-            line_heights.append(line_height)
+        total_height = PADDING
+        for block in content_blocks:
+            if block['type'] == '#  ': total_height += block['font'].getbbox(block['content'])[3] + TITLE_SPACING
+            elif block['type'] == '## ': total_height += block['font'].getbbox(block['content'])[3] + SECTION_SPACING
+            elif block['type'] == '*  ': total_height += block['font'].getbbox(block['content'])[3] + LINE_SPACING
+            elif block['type'] == '---': total_height += 30
+            elif block['type'] == 'empty': total_height += LINE_SPACING
+            else: total_height += block['font'].getbbox(block['content'])[3] + LINE_SPACING
+        total_height += PADDING - LINE_SPACING
 
-        img_width = max_width + 2 * padding
-        img_height = total_height - line_spacing + 2 * padding
-        
-        image = PILImage.new('RGB', (img_width, img_height), bg_color)
+        img_width = max_width + PADDING * 2
+        image = PILImage.new('RGB', (img_width, total_height), BG_COLOR)
         draw = ImageDraw.Draw(image)
         
-        y_text = padding
-        for i, line in enumerate(lines):
-            draw.text((padding, y_text), line, font=self.font, fill=text_color)
-            y_text += line_heights[i] + line_spacing
-            
+        y = PADDING
+        for block in content_blocks:
+            if block['type'] == '#  ':
+                draw.text((PADDING, y), block['content'], font=block['font'], fill=TITLE_COLOR)
+                y += block['font'].getbbox(block['content'])[3] + TITLE_SPACING
+            elif block['type'] == '## ':
+                draw.text((PADDING, y), block['content'], font=block['font'], fill=HEADER_COLOR)
+                y += block['font'].getbbox(block['content'])[3] + SECTION_SPACING
+            elif block['type'] == '*  ':
+                text_height = block['font'].getbbox(block['content'])[3] - block['font'].getbbox(block['content'])[1]
+                bullet_radius = 4
+                bullet_y = y + text_height / 2
+                draw.ellipse((PADDING, bullet_y - bullet_radius, PADDING + bullet_radius*2, bullet_y + bullet_radius), fill=HEADER_COLOR)
+                draw.text((PADDING + 40, y), block['content'], font=block['font'], fill=BODY_COLOR)
+                y += text_height + LINE_SPACING
+            elif block['type'] == '---':
+                draw.line([(PADDING, y+10), (img_width - PADDING, y+10)], fill=LINE_COLOR, width=2)
+                y += 30
+            elif block['type'] == 'empty':
+                y += LINE_SPACING
+            else:
+                draw.text((PADDING, y), block['content'], font=block['font'], fill=BODY_COLOR)
+                y += block['font'].getbbox(block['content'])[3] + LINE_SPACING
+
         buffer = io.BytesIO()
         image.save(buffer, format='PNG')
         return buffer.getvalue()
 
     async def _load_user_counts(self):
-        if not self.user_counts_file.exists():
-            self.user_counts = {}
-            return
-        loop = asyncio.get_running_loop()
-        try:
-            content = await loop.run_in_executor(None, self.user_counts_file.read_text, "utf-8")
-            data = await loop.run_in_executor(None, json.loads, content)
-            if isinstance(data, dict):
-                self.user_counts = {str(k): v for k, v in data.items()}
-        except Exception as e:
-            logger.error(f"加载用户次数文件时发生错误: {e}", exc_info=True)
-            self.user_counts = {}
+        if not self.user_counts_file.exists(): self.user_counts = {}; return
+        try: self.user_counts = {str(k): v for k, v in json.loads(self.user_counts_file.read_text("utf-8")).items()}
+        except Exception as e: logger.error(f"加载用户次数文件失败: {e}", exc_info=True); self.user_counts = {}
 
     async def _save_user_counts(self):
-        loop = asyncio.get_running_loop()
-        try:
-            json_data = await loop.run_in_executor(None, functools.partial(json.dumps, self.user_counts, ensure_ascii=False, indent=4))
-            await loop.run_in_executor(None, self.user_counts_file.write_text, json_data, "utf-8")
-        except Exception as e:
-            logger.error(f"保存用户次数文件时发生错误: {e}", exc_info=True)
+        try: self.user_counts_file.write_text(json.dumps(self.user_counts, ensure_ascii=False, indent=4), "utf-8")
+        except Exception as e: logger.error(f"保存用户次数文件失败: {e}", exc_info=True)
 
-    def _get_user_count(self, user_id: str) -> int:
-        return self.user_counts.get(str(user_id), 0)
+    def _get_user_count(self, user_id: str) -> int: return self.user_counts.get(str(user_id), 0)
 
     async def _decrease_user_count(self, user_id: str):
-        user_id_str = str(user_id)
-        count = self._get_user_count(user_id_str)
-        if count > 0:
-            self.user_counts[user_id_str] = count - 1
-            await self._save_user_counts()
+        if (count := self._get_user_count(str(user_id))) > 0:
+            self.user_counts[str(user_id)] = count - 1; await self._save_user_counts()
 
     async def _load_group_counts(self):
-        if not self.group_counts_file.exists():
-            self.group_counts = {}
-            return
-        loop = asyncio.get_running_loop()
-        try:
-            content = await loop.run_in_executor(None, self.group_counts_file.read_text, "utf-8")
-            data = await loop.run_in_executor(None, json.loads, content)
-            if isinstance(data, dict):
-                self.group_counts = {str(k): v for k, v in data.items()}
-        except Exception as e:
-            logger.error(f"加载群组次数文件时发生错误: {e}", exc_info=True)
-            self.group_counts = {}
+        if not self.group_counts_file.exists(): self.group_counts = {}; return
+        try: self.group_counts = {str(k): v for k, v in json.loads(self.group_counts_file.read_text("utf-8")).items()}
+        except Exception as e: logger.error(f"加载群组次数文件失败: {e}", exc_info=True); self.group_counts = {}
 
     async def _save_group_counts(self):
-        loop = asyncio.get_running_loop()
-        try:
-            json_data = await loop.run_in_executor(None, functools.partial(json.dumps, self.group_counts, ensure_ascii=False, indent=4))
-            await loop.run_in_executor(None, self.group_counts_file.write_text, json_data, "utf-8")
-        except Exception as e:
-            logger.error(f"保存群组次数文件时发生错误: {e}", exc_info=True)
+        try: self.group_counts_file.write_text(json.dumps(self.group_counts, ensure_ascii=False, indent=4), "utf-8")
+        except Exception as e: logger.error(f"保存群组次数文件失败: {e}", exc_info=True)
 
-    def _get_group_count(self, group_id: str) -> int:
-        return self.group_counts.get(str(group_id), 0)
+    def _get_group_count(self, group_id: str) -> int: return self.group_counts.get(str(group_id), 0)
 
     async def _decrease_group_count(self, group_id: str):
-        group_id_str = str(group_id)
-        count = self._get_group_count(group_id_str)
-        if count > 0:
-            self.group_counts[group_id_str] = count - 1
-            await self._save_group_counts()
+        if (count := self._get_group_count(str(group_id))) > 0:
+            self.group_counts[str(group_id)] = count - 1; await self._save_group_counts()
 
-    # ------------------- 统一智能指令 -------------------
     @filter.command("生图", "draw", "画画", prefix_optional=True)
     async def on_cmd_draw(self, event: AstrMessageEvent):
-        if not self.iwf:
-            yield event.plain_result("插件内部错误：ImageWorkflow未初始化。")
-            return
-
+        if not self.iwf: yield event.plain_result("插件内部错误：ImageWorkflow未初始化。"); return
         images = await self.iwf.get_explicit_images_only(event)
-        
         mode = "图生图" if images else "文生图"
-        
-        async for result in self._process_generation_request(
-            event,
-            mode=mode,
-            require_image=bool(images),
-            pre_fetched_images=images
-        ):
-            yield result
+        async for result in self._process_generation_request(event, mode=mode, require_image=bool(images), pre_fetched_images=images): yield result
 
-    # ------------------- 管理命令 -------------------
     @filter.command("生图增加用户次数", prefix_optional=True)
     async def on_add_user_counts(self, event: AstrMessageEvent):
         if not self.is_global_admin(event): return
         cmd_text = event.message_str.strip()
-        at_seg = next((s for s in event.message_obj.message if isinstance(s, At)), None)
         target_qq, count = None, 0
-        if at_seg:
+        if at_seg := next((s for s in event.message_obj.message if isinstance(s, At)), None):
             target_qq = str(at_seg.qq)
-            match = re.search(r"(\d+)\s*$", cmd_text)
-            if match: count = int(match.group(1))
-        else:
-            match = re.search(r"(\d+)\s+(\d+)", cmd_text)
-            if match: target_qq, count = match.group(1), int(match.group(2))
-        if not target_qq or count <= 0:
-            yield event.plain_result('格式错误:\n#生图增加用户次数 @用户 <次数>\n或 #生图增加用户次数 <QQ号> <次数>')
-            return
+            if match := re.search(r"(\d+)\s*$", cmd_text): count = int(match.group(1))
+        elif match := re.search(r"(\d+)\s+(\d+)", cmd_text): target_qq, count = match.group(1), int(match.group(2))
+        if not target_qq or count <= 0: yield event.plain_result('格式错误:\n/生图增加用户次数 @用户 <次数>\n或 /生图增加用户次数 <QQ号> <次数>'); return
         current_count = self._get_user_count(target_qq)
         self.user_counts[str(target_qq)] = current_count + count
         await self._save_user_counts()
@@ -346,11 +285,7 @@ class BananaPlugin(Star):
     @filter.command("生图增加群组次数", prefix_optional=True)
     async def on_add_group_counts(self, event: AstrMessageEvent):
         if not self.is_global_admin(event): return
-        cmd_text = event.message_str.strip()
-        match = re.search(r"(\d+)\s+(\d+)", cmd_text)
-        if not match:
-            yield event.plain_result('格式错误: #生图增加群组次数 <群号> <次数>')
-            return
+        if not (match := re.search(r"(\d+)\s+(\d+)", event.message_str.strip())): yield event.plain_result('格式错误: /生图增加群组次数 <群号> <次数>'); return
         target_group, count = match.group(1), int(match.group(2))
         current_count = self._get_group_count(target_group)
         self.group_counts[str(target_group)] = current_count + count
@@ -361,26 +296,17 @@ class BananaPlugin(Star):
     async def on_query_counts(self, event: AstrMessageEvent):
         user_id_to_query = event.get_sender_id()
         if self.is_global_admin(event):
-            at_seg = next((s for s in event.message_obj.message if isinstance(s, At)), None)
-            if at_seg: user_id_to_query = str(at_seg.qq)
-            else:
-                match = re.search(r"(\d+)", event.message_str)
-                if match: user_id_to_query = match.group(1)
-
+            if at_seg := next((s for s in event.message_obj.message if isinstance(s, At)), None): user_id_to_query = str(at_seg.qq)
+            elif match := re.search(r"(\d+)", event.message_str): user_id_to_query = match.group(1)
         user_count = self._get_user_count(user_id_to_query)
-        reply_msg = f"用户 {user_id_to_query} 个人剩余次数为: {user_count}" if user_id_to_query != event.get_sender_id() else f"您好，您当前个人剩余次数为: {user_count}"
-        if group_id := event.get_group_id():
-            group_count = self._get_group_count(group_id)
-            reply_msg += f"\n本群共享剩余次数为: {group_count}"
+        reply_msg = f"用户 {user_id_to_query} 个人剩余次数: {user_count}" if user_id_to_query != event.get_sender_id() else f"您好，您当前个人剩余次数: {user_count}"
+        if group_id := event.get_group_id(): reply_msg += f"\n本群共享剩余次数: {self._get_group_count(group_id)}"
         yield event.plain_result(reply_msg)
 
     @filter.command("生图添加key", prefix_optional=True)
     async def on_add_key(self, event: AstrMessageEvent):
         if not self.is_global_admin(event): return
-        new_keys = event.message_str.strip().split()
-        if not new_keys:
-            yield event.plain_result("格式错误，请提供要添加的Key。")
-            return
+        if not (new_keys := event.message_str.strip().split()): yield event.plain_result("格式错误，请提供要添加的Key。"); return
         api_keys = self.conf.get("api_keys", [])
         added_keys = [key for key in new_keys if key not in api_keys]
         api_keys.extend(added_keys)
@@ -391,9 +317,7 @@ class BananaPlugin(Star):
     async def on_list_keys(self, event: AstrMessageEvent):
         if not self.is_global_admin(event): return
         api_keys = self.conf.get("api_keys", [])
-        if not api_keys:
-            yield event.plain_result("📝 暂未配置任何 API Key。")
-            return
+        if not api_keys: yield event.plain_result("📝 暂未配置任何 API Key。"); return
         key_list_str = "\n".join(f"{i + 1}. {key[:8]}...{key[-4:]}" for i, key in enumerate(api_keys))
         yield event.plain_result(f"🔑 API Key 列表:\n{key_list_str}")
 
@@ -403,153 +327,67 @@ class BananaPlugin(Star):
         param = event.message_str.strip()
         api_keys = self.conf.get("api_keys", [])
         if param.lower() == "all":
-            count = len(api_keys)
-            await self.conf.set("api_keys", [])
-            yield event.plain_result(f"✅ 已删除全部 {count} 个 Key。")
+            await self.conf.set("api_keys", []); yield event.plain_result(f"✅ 已删除全部 {len(api_keys)} 个 Key。")
         elif param.isdigit() and 1 <= int(param) <= len(api_keys):
-            idx = int(param) - 1
-            removed_key = api_keys.pop(idx)
-            await self.conf.set("api_keys", api_keys)
-            yield event.plain_result(f"✅ 已删除 Key: {removed_key[:8]}...")
-        else:
-            yield event.plain_result("格式错误，请使用 #生图删除key <序号|all>")
+            removed_key = api_keys.pop(int(param) - 1)
+            await self.conf.set("api_keys", api_keys); yield event.plain_result(f"✅ 已删除 Key: {removed_key[:8]}...")
+        else: yield event.plain_result("格式错误，请使用 /生图删除key <序号|all>")
 
-    # ------------------- 预设指令 -------------------
-    @filter.command("手办化", prefix_optional=True)
-    async def on_cmd_figurine(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="手办化", require_image=True): yield result
-    @filter.command("手办化2", prefix_optional=True)
-    async def on_cmd_figurine2(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="手办化2", require_image=True): yield result
-    @filter.command("手办化3", prefix_optional=True)
-    async def on_cmd_figurine3(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="手办化3", require_image=True): yield result
-    @filter.command("手办化4", prefix_optional=True)
-    async def on_cmd_figurine4(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="手办化4", require_image=True): yield result
-    @filter.command("手办化5", prefix_optional=True)
-    async def on_cmd_figurine5(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="手办化5", require_image=True): yield result
-    @filter.command("手办化6", prefix_optional=True)
-    async def on_cmd_figurine6(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="手办化6", require_image=True): yield result
-    @filter.command("Q版化", prefix_optional=True)
-    async def on_cmd_qversion(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="Q版化", require_image=True): yield result
-    @filter.command("痛屋化", prefix_optional=True)
-    async def on_cmd_painroom(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="痛屋化", require_image=True): yield result
-    @filter.command("痛屋化2", prefix_optional=True)
-    async def on_cmd_painroom2(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="痛屋化2", require_image=True): yield result
-    @filter.command("痛车化", prefix_optional=True)
-    async def on_cmd_paincar(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="痛车化", require_image=True): yield result
-    @filter.command("cos化", prefix_optional=True)
-    async def on_cmd_cos(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="cos化", require_image=True): yield result
-    @filter.command("cos自拍", prefix_optional=True)
-    async def on_cmd_cos_selfie(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="cos自拍", require_image=True): yield result
-    @filter.command("孤独的我", prefix_optional=True)
-    async def on_cmd_clown(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="孤独的我", require_image=True): yield result
-    @filter.command("第三视角", prefix_optional=True)
-    async def on_cmd_view3(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="第三视角", require_image=True): yield result
-    @filter.command("鬼图", prefix_optional=True)
-    async def on_cmd_ghost(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="鬼图", require_image=True): yield result
-    @filter.command("第一视角", prefix_optional=True)
-    async def on_cmd_view1(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="第一视角", require_image=True): yield result
-    @filter.command("贴纸化", prefix_optional=True)
-    async def on_cmd_sticker(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="贴纸化", require_image=True): yield result
-    @filter.command("玉足", prefix_optional=True)
-    async def on_cmd_foot_jade(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="玉足", require_image=True): yield result
-    @filter.command("fumo化", prefix_optional=True)
-    async def on_cmd_fumo(self, event: AstrMessageEvent):
-        async for result in self._process_generation_request(event, mode="fumo化", require_image=True): yield result
+    PRESET_COMMANDS = ["手办化", "手办化2", "手办化3", "手办化4", "手办化5", "手办化6", "Q版化", "痛屋化", "痛屋化2", "痛车化", "cos化", "cos自拍", "孤独的我", "第三视角", "鬼图", "第一视角", "贴纸化", "玉足", "fumo化"]
+    for cmd in PRESET_COMMANDS:
+        exec(f"""
+@filter.command("{cmd}", prefix_optional=True)
+async def on_cmd_{cmd}(self, event: AstrMessageEvent):
+    async for result in self._process_generation_request(event, mode="{cmd}", require_image=True): yield result
+""")
     @filter.command("生图帮助", prefix_optional=True)
     async def on_cmd_help(self, event: AstrMessageEvent):
         async for result in self._process_generation_request(event, mode="生图帮助", require_image=False): yield result
 
-    # ------------------- 核心处理逻辑 -------------------
-
     async def _process_generation_request(self, event: AstrMessageEvent, mode: str, require_image: bool, pre_fetched_images: Optional[List[bytes]] = None):
-        cmd_text = event.message_str
-        cmd_map = {"手办化": "figurine_1", "手办化2": "figurine_2", "手办化3": "figurine_3", "手办化4": "figurine_4",
-                   "手办化5": "figurine_5", "手办化6": "figurine_6", "Q版化": "q_version", "痛屋化": "pain_room_1",
-                   "痛屋化2": "pain_room_2", "痛车化": "pain_car", "cos化": "cos", "cos自拍": "cos_selfie",
-                   "孤独的我": "clown", "第三视角": "view_3", "鬼图": "ghost", "第一视角": "view_1", "贴纸化": "sticker",
-                   "玉足": "foot_jade", "fumo化": "fumo"}
-
         if mode == "生图帮助":
             help_text = self.conf.get("help_text", "帮助信息未配置。")
-            promo_message = Plain(f"{self.promo_text}{self.promo_link}")
+            promo_message = Plain(f"\n{self.promo_text}{self.promo_link}")
             loop = asyncio.get_running_loop()
             image_bytes = await loop.run_in_executor(None, self._render_text_to_image_sync, help_text)
-            
-            if image_bytes:
-                yield event.chain_result([Image.fromBytes(image_bytes), promo_message])
-            else:
-                yield event.chain_result([Plain(help_text), Plain("\n\n"), promo_message])
+            if image_bytes: yield event.chain_result([Image.fromBytes(image_bytes), promo_message])
+            else: yield event.chain_result([Plain(help_text), promo_message])
             return
 
         user_prompt = ""
         if mode in ["文生图", "图生图"]:
-            user_prompt = cmd_text.strip()
-            if not user_prompt:
-                yield event.plain_result(f"❌ 命令格式错误: /{event.command} <提示词> [图片]")
-                return
+            if not (user_prompt := event.message_str.strip()): yield event.plain_result(f"❌ 命令格式错误: /{event.command} <提示词> [图片]"); return
         else:
+            cmd_map = {"手办化": "figurine_1", "手办化2": "figurine_2", "手办化3": "figurine_3", "手办化4": "figurine_4", "手办化5": "figurine_5", "手办化6": "figurine_6", "Q版化": "q_version", "痛屋化": "pain_room_1", "痛屋化2": "pain_room_2", "痛车化": "pain_car", "cos化": "cos", "cos自拍": "cos_selfie", "孤独的我": "clown", "第三视角": "view_3", "鬼图": "ghost", "第一视角": "view_1", "贴纸化": "sticker", "玉足": "foot_jade", "fumo化": "fumo"}
             prompt_key = cmd_map.get(mode)
             user_prompts = self.conf.get("prompts", {})
-            user_prompt = user_prompts.get(prompt_key) or self.default_prompts.get(prompt_key, "")
-            if not user_prompt:
-                yield event.plain_result(f"❌ 预设 '{mode}' 未在配置中找到或prompt为空。")
-                return
+            if not (user_prompt := user_prompts.get(prompt_key) or self.default_prompts.get(prompt_key, "")):
+                yield event.plain_result(f"❌ 预设 '{mode}' 未在配置中找到或prompt为空。"); return
 
         sender_id, group_id, is_master = event.get_sender_id(), event.get_group_id(), self.is_global_admin(event)
         if not is_master:
-            user_count = self._get_user_count(sender_id)
-            group_count = self._get_group_count(group_id) if group_id else 0
             user_limit_on = self.conf.get("enable_user_limit", True)
             group_limit_on = self.conf.get("enable_group_limit", False) and group_id
-            
-            has_count = (not group_limit_on or group_count > 0) or (not user_limit_on or user_count > 0)
-            if group_id and not has_count:
+            if not ((not group_limit_on or self._get_group_count(group_id) > 0) or (not user_limit_on or self._get_user_count(sender_id) > 0)):
                 yield event.plain_result("❌ 本群次数与您的个人次数均已用尽。"); return
-            if not group_id and user_limit_on and user_count <= 0:
-                yield event.plain_result("❌ 您的使用次数已用完。"); return
 
-        img_bytes_list = []
         if require_image:
-            if pre_fetched_images is not None:
-                img_bytes_list = pre_fetched_images
-            elif not self.iwf or not (img_bytes_list := await self.iwf.get_all_images_for_preset_cmd(event)):
-                yield event.plain_result("此命令需要图片。请发送或引用一张图片，或@一个用户再试。"); return
-            
-            yield event.plain_result(f"🎨 收到 {len(img_bytes_list)} 张图片，正在生成 [{mode}] 风格的图片...")
+            img_bytes_list = pre_fetched_images if pre_fetched_images is not None else (await self.iwf.get_all_images_for_preset_cmd(event) if self.iwf else [])
+            if not img_bytes_list: yield event.plain_result("此命令需要图片。请发送或引用一张图片，或@一个用户再试。"); return
+            yield event.plain_result(f"🎨 收到 {len(img_bytes_list)} 张图片，正在生成 [{mode}] ...")
         else:
-            yield event.plain_result(f"🎨 收到指令，正在生成 [{mode}] 风格的图片...")
+            yield event.plain_result(f"🎨 收到指令，正在生成 [{mode}] ...")
 
         start_time = datetime.now()
-        res = await self._call_api_with_retry(img_bytes_list, user_prompt)
+        res = await self._call_api_with_retry(img_bytes_list if require_image else [], user_prompt)
         elapsed = (datetime.now() - start_time).total_seconds()
 
         if isinstance(res, bytes):
             if not is_master:
-                if self.conf.get("enable_group_limit", False) and group_id and self._get_group_count(group_id) > 0:
-                    await self._decrease_group_count(group_id)
-                elif self.conf.get("enable_user_limit", True) and self._get_user_count(sender_id) > 0:
-                    await self._decrease_user_count(sender_id)
-
+                if self.conf.get("enable_group_limit", False) and group_id and self._get_group_count(group_id) > 0: await self._decrease_group_count(group_id)
+                elif self.conf.get("enable_user_limit", True) and self._get_user_count(sender_id) > 0: await self._decrease_user_count(sender_id)
             caption_parts = [f"✅ 生成成功 ({elapsed:.2f}s)", f"模式: {mode}"]
-            if is_master:
-                caption_parts.append("剩余次数: ∞")
+            if is_master: caption_parts.append("剩余: ∞")
             else:
                 if self.conf.get("enable_user_limit", True): caption_parts.append(f"个人剩余: {self._get_user_count(sender_id)}")
                 if self.conf.get("enable_group_limit", False) and group_id: caption_parts.append(f"本群剩余: {self._get_group_count(group_id)}")
@@ -560,15 +398,13 @@ class BananaPlugin(Star):
     async def _get_current_api_key(self) -> str | None:
         keys = self.conf.get("api_keys", [])
         if not keys: return None
-        async with self.key_lock:
-            return keys[self.key_index]
+        async with self.key_lock: return keys[self.key_index]
 
     async def _switch_next_api_key(self):
         keys = self.conf.get("api_keys", [])
         if not keys: return
-        async with self.key_lock:
-            self.key_index = (self.key_index + 1) % len(keys)
-            logger.info(f"API密钥已切换至索引: {self.key_index}")
+        async with self.key_lock: self.key_index = (self.key_index + 1) % len(keys)
+        logger.info(f"API密钥已切换至索引: {self.key_index}")
 
     def _extract_image_url_from_response(self, data: Dict[str, Any]) -> str | None:
         try: return data["choices"][0]["message"]["images"][0]["image_url"]["url"]
@@ -576,75 +412,40 @@ class BananaPlugin(Star):
         try: return data["choices"][0]["message"]["images"][0]["url"]
         except (IndexError, TypeError, KeyError): pass
         try:
-            content_text = data["choices"][0]["message"]["content"]
-            url_match = re.search(r'https?://[^\s<>")\]]+', content_text)
-            if url_match: return url_match.group(0).rstrip(")>,'\"")
+            if url_match := re.search(r'https?://[^\s<>")\]]+', data["choices"][0]["message"]["content"]): return url_match.group(0).rstrip(")>,'\"")
         except (IndexError, TypeError, KeyError): pass
         return None
 
     async def _call_api_with_retry(self, image_bytes_list: List[bytes], prompt: str) -> bytes | str:
         api_keys = self.conf.get("api_keys", [])
-        if not api_keys:
-            return "无可用的 API Key"
-
-        max_attempts = len(api_keys)
-        for attempt in range(max_attempts):
-            api_key = await self._get_current_api_key()
-            if not api_key:
-                continue
-
-            logger.info(f"尝试使用API密钥 (索引: {self.key_index}, 尝试次数: {attempt + 1}/{max_attempts}) 进行生图...")
-            
-            try:
-                result = await self._call_api_single(api_key, image_bytes_list, prompt)
-                return result
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                logger.error(f"第 {attempt + 1} 次尝试失败 (密钥索引 {self.key_index}): 网络错误 {e}")
-                await self._switch_next_api_key()
+        if not api_keys: return "无可用的 API Key"
+        for attempt in range(len(api_keys)):
+            if not (api_key := await self._get_current_api_key()): continue
+            logger.info(f"尝试使用API密钥 (索引: {self.key_index}, 尝试: {attempt + 1}/{len(api_keys)}) 进行生图...")
+            try: return await self._call_api_single(api_key, image_bytes_list, prompt)
             except Exception as e:
-                logger.error(f"第 {attempt + 1} 次尝试失败 (密钥索引 {self.key_index}): 未知错误 {e}", exc_info=True)
+                logger.error(f"尝试失败 (密钥索引 {self.key_index}): {e}", exc_info=False)
                 await self._switch_next_api_key()
-        
         return "所有API密钥均尝试失败，请检查密钥配置或网络连接。"
 
     async def _call_api_single(self, api_key: str, image_bytes_list: List[bytes], prompt: str) -> bytes | str:
-        api_url = self.conf.get("api_url")
-        if not api_url: return "API URL 未配置"
-
+        if not (api_url := self.conf.get("api_url")): return "API URL 未配置"
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         content_list = [{"type": "text", "text": prompt}]
-        if image_bytes_list:
-            for image_bytes in image_bytes_list:
-                img_b64 = base64.b64encode(image_bytes).decode("utf-8")
-                content_list.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}})
-
+        for image_bytes in image_bytes_list:
+            content_list.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64.b64encode(image_bytes).decode('utf-8')}"}})
         payload = {"model": "nano-banana", "max_tokens": 1500, "stream": False, "messages": [{"role": "user", "content": content_list}]}
         
         if not self.iwf: return "ImageWorkflow 未初始化"
         async with self.iwf.session.post(api_url, json=payload, headers=headers, proxy=self.iwf.proxy, timeout=120) as resp:
-            if resp.status != 200:
-                error_text = await resp.text()
-                logger.error(f"API 请求失败: HTTP {resp.status}, 响应: {error_text}")
-                raise aiohttp.ClientResponseError(resp.request_info, resp.history, status=resp.status, message=error_text)
-            
+            resp.raise_for_status()
             data = await resp.json()
-            if "error" in data:
-                return data["error"].get("message", json.dumps(data["error"]))
-            
-            gen_image_url = self._extract_image_url_from_response(data)
-            if not gen_image_url:
-                error_msg = f"API响应中未找到图片数据。原始响应 (部分): {str(data)[:500]}..."
-                logger.error(f"API响应中未找到图片数据: {data}")
-                return error_msg
-            
-            if gen_image_url.startswith("data:image/"):
-                return base64.b64decode(gen_image_url.split(",", 1)[1])
-            else:
-                downloaded_image = await self.iwf._download_image(gen_image_url)
-                if downloaded_image:
-                    return downloaded_image
-                else:
-                    raise Exception("下载生成的图片失败")
+            if "error" in data: return data["error"].get("message", json.dumps(data["error"]))
+            if not (gen_image_url := self._extract_image_url_from_response(data)):
+                raise Exception(f"API响应中未找到图片数据: {str(data)[:500]}...")
+            if gen_image_url.startswith("data:image/"): return base64.b64decode(gen_image_url.split(",", 1)[1])
+            if downloaded_image := await self.iwf._download_image(gen_image_url): return downloaded_image
+            raise Exception("下载生成的图片失败")
 
     async def terminate(self):
         if self.iwf: await self.iwf.terminate()

@@ -37,40 +37,28 @@
         "description": "【权限】用户白名单 (QQ号)",
         "type": "list",
         "hint": "留空则对所有用户开放。填写后，只有列表中的用户才能使用本插件（机器人主人除外）。",
-        "items": {
-            "type": "string",
-            "description": "用户QQ号"
-        },
+        "items": { "type": "string", "description": "用户QQ号" },
         "default": []
     },
     "user_blacklist": {
         "description": "【权限】用户黑名单 (QQ号)",
         "type": "list",
         "hint": "黑名单优先级最高。列表中的用户将无法使用本插件（机器人主人除外）。",
-        "items": {
-            "type": "string",
-            "description": "用户QQ号"
-        },
+        "items": { "type": "string", "description": "用户QQ号" },
         "default": []
     },
     "group_whitelist": {
         "description": "【权限】群聊白名单 (群号)",
         "type": "list",
         "hint": "留空则在所有群聊中可用。填写后，插件只会在列表中的群聊生效。",
-        "items": {
-            "type": "string",
-            "description": "群号"
-        },
+        "items": { "type": "string", "description": "群号" },
         "default": []
     },
     "group_blacklist": {
         "description": "【权限】群聊黑名单 (群号)",
         "type": "list",
         "hint": "黑名单优先级最高。插件将不会在列表中的群聊生效。",
-        "items": {
-            "type": "string",
-            "description": "群号"
-        },
+        "items": { "type": "string", "description": "群号" },
         "default": []
     },
     "enable_user_limit": {
@@ -90,8 +78,8 @@
         "type": "text",
         "editor_mode": true,
         "editor_language": "markdown",
-        "hint": "自定义 `/生图帮助` 指令所展示的内容。修改后会动态渲染成图片。",
-        "default": "🎨 Nano Banana 插件帮助 🎨\n------------------------------------------------\n\n⭐ 智能指令 (推荐)\n  /生图 <提示词> [图片]\n  (别名: /draw, /画画)\n  说明: 自动判断文生图/图生图模式。\n\n✨ 预设风格 (图生图)\n  - 手办化: /手办化, /手办化2 ... /手办化6\n  - 角色扮演: /cos化, /cos自拍\n  - Q版可爱: /Q版化, /fumo化\n  - 场景变换: /痛屋化, /痛屋化2, /痛车化\n  - 艺术风格: /贴纸化, /孤独的我, /鬼图\n  - 视角变换: /第一视角, /第三视角\n  - 特殊癖好: /玉足\n\n🔧 通用指令\n  /生图帮助 - 显示此帮助图\n  /生图查询次数 - 查询个人和群聊的剩余次数\n\n🔑 管理指令 (仅主人)\n  /生图添加key <key1> ...\n  /生图key列表\n  /生图删除key <序号|all>\n  /生图增加用户次数 <QQ号> <数量>\n  /生图增加群组次数 <群号> <数量>"
+        "hint": "自定义 `/生图帮助` 指令所展示的内容。使用 # ## * --- 进行排版。",
+        "default": "# Nano Banana 插件帮助\n\n## 智能指令 [推荐]\n* /生图 <提示词> [图片]\n* 别名: /draw, /画画\n* 说明: 自动判断文生图/图生图模式。\n\n## 预设风格 (图生图)\n* 手办化: /手办化, /手办化2 ... /手办化6\n* 角色扮演: /cos化, /cos自拍\n* Q版可爱: /Q版化, /fumo化\n* 场景变换: /痛屋化, /痛屋化2, /痛车化\n* 艺术风格: /贴纸化, /孤独的我, /鬼图\n* 视角变换: /第一视角, /第三视角\n* 特殊癖好: /玉足\n\n---\n\n## 通用指令\n* /生图帮助 - 显示此帮助图\n* /生图查询次数 - 查询个人和群聊的剩余次数\n\n## 管理指令 (仅主人)\n* /生图添加key <key1> ...\n* /生图key列表\n* /生图删除key <序号|all>\n* /生图增加用户次数 <QQ号> <数量>\n* /生图增加群组次数 <群号> <数量>"
     },
     "prompts": {
         "description": "【高级】自定义指令的 Prompt",
